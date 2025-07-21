@@ -1,0 +1,38 @@
+{
+  "name": "betta-fish-api",
+  "version": "1.0.0",
+  "description": "API for Betta Fish system with Supabase",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.50.0",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.8.1",
+    "helmet": "^7.0.0",
+    "joi": "^17.9.2",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "jest": "^29.6.2",
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "api",
+    "supabase",
+    "auth",
+    "profile",
+    "betta-fish"
+  ],
+  "author": "Your Name",
+  "license": "ISC"
+}
