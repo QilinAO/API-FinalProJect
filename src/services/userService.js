@@ -1,140 +1,178 @@
-const { supabase } = require('../config/supabase');
+// ======================================================================
+// File: src/services/userService.js
+// หน้าที่: จัดการ Logic การทำงานที่เกี่ยวข้องกับข้อมูลผู้ใช้ (Profile, History)
+// ======================================================================
+
+const { supabase, supabaseAdmin } = require('../config/supabase');
 const path = require('path');
 
 class UserService {
+  /**
+   * ดึงข้อมูลโปรไฟล์ของผู้ใช้ตาม ID
+   * @param {string} userId - UUID ของผู้ใช้
+   * @returns {Promise<object|null>}
+   */
+  async getProfile(userId) {
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (error && error.code !== 'PGRST116') {
+      throw new Error(`ไม่สามารถดึงข้อมูลโปรไฟล์ได้: ${error.message}`);
+    }
+    return data;
+  }
 
-    async getProfile(userId) {
-        const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userId)
-            .single();
+  /**
+   * อัปเดตข้อมูลโปรไฟล์ของผู้ใช้
+   * @param {string} userId - UUID ของผู้ใช้
+   * @param {object} profileData - ข้อมูลที่ต้องการอัปเดต
+   * @returns {Promise<object>}
+   */
+  async updateProfile(userId, profileData) {
+    const { firstName, lastName, ...rest } = profileData;
+    const dataToUpdate = { ...rest, updated_at: new Date().toISOString() };
+    if (firstName !== undefined) dataToUpdate.first_name = firstName;
+    if (lastName !== undefined) dataToUpdate.last_name = lastName;
 
-        if (error && error.code !== 'PGRST116') {
-            throw new Error('ไม่สามารถดึงข้อมูลโปรไฟล์ได้: ' + error.message);
-        }
-        return data;
+    // ตรวจสอบ Username ซ้ำ (ถ้ามีการส่งมา)
+    if (dataToUpdate.username) {
+      const { data: existingUser, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', dataToUpdate.username)
+        .neq('id', userId)
+        .maybeSingle();
+      if (checkError) throw new Error('เกิดข้อผิดพลาดในการตรวจสอบชื่อผู้ใช้');
+      if (existingUser) throw new Error('ชื่อผู้ใช้นี้ถูกใช้แล้ว');
     }
 
-    async updateProfile(userId, profileData) {
-        const { firstName, lastName, ...rest } = profileData;
-        const dataToUpdate = { ...rest, updated_at: new Date().toISOString() };
-        if (firstName !== undefined) dataToUpdate.first_name = firstName;
-        if (lastName !== undefined) dataToUpdate.last_name = lastName;
+    // [สำคัญ] ใช้ supabaseAdmin เพื่อให้แน่ใจว่ามีสิทธิ์ในการอัปเดต
+    const { data, error } = await supabaseAdmin.from('profiles').update(dataToUpdate).eq('id', userId).select().single();
+    if (error) {
+      throw new Error(`ไม่สามารถอัปเดตโปรไฟล์ได้: ${error.message}`);
+    }
+    return data;
+  }
 
-        if (dataToUpdate.username) {
-            const { data: existingUser, error: checkError } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('username', dataToUpdate.username)
-                .neq('id', userId)
-                .maybeSingle();
-            if (checkError) throw new Error('เกิดข้อผิดพลาดในการตรวจสอบชื่อผู้ใช้');
-            if (existingUser) throw new Error('ชื่อผู้ใช้นี้ถูกใช้แล้ว');
-        }
+  /**
+   * อัปโหลดรูปโปรไฟล์และอัปเดต URL ในโปรไฟล์
+   * @param {string} userId - UUID ของผู้ใช้
+   * @param {object} file - ไฟล์ที่ได้จาก Multer (req.file)
+   * @returns {Promise<object>}
+   */
+  async uploadProfilePicture(userId, file) {
+    const fileExtension = path.extname(file.originalname).toLowerCase();
+    const filePath = `Profile/${userId}${fileExtension}`;
 
-        const { data, error } = await supabase
-            .from('profiles')
-            .update(dataToUpdate)
-            .eq('id', userId)
-            .select()
-            .single();
-        if (error) {
-            throw new Error('ไม่สามารถอัพเดทโปรไฟล์ได้: ' + error.message);
-        }
-        return data;
+    // [สำคัญ] ใช้ supabaseAdmin เพื่อให้แน่ใจว่ามีสิทธิ์ในการอัปโหลด/เขียนทับ
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('posters')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true,
+      });
+    if (uploadError) {
+      throw new Error(`Supabase Storage Error: ${uploadError.message}`);
     }
 
-    async uploadProfilePicture(userId, fileBuffer, originalFileName) {
-        const fileExtension = path.extname(originalFileName);
-        const newFileName = `${userId}${fileExtension}`;
-        const filePath = `Profile/${newFileName}`;
+    const { data: urlData } = supabase.storage.from('posters').getPublicUrl(filePath);
+    const avatarUrl = urlData.publicUrl;
 
-        const { error: uploadError } = await supabase.storage
-            .from('posters')
-            .upload(filePath, fileBuffer, { upsert: true });
-        if (uploadError) {
-            throw new Error('Supabase Storage Error: ' + uploadError.message);
-        }
+    // เรียกใช้ฟังก์ชัน updateProfile ภายใน Class เดียวกัน
+    return this.updateProfile(userId, { avatar_url: avatarUrl });
+  }
 
-        const { data: urlData } = supabase.storage
-            .from('posters')
-            .getPublicUrl(filePath);
-        return await this.updateProfile(userId, { avatar_url: urlData.publicUrl });
+  /**
+   * [Admin Only] ดึงข้อมูลผู้ใช้ทั้งหมด
+   * @returns {Promise<Array>}
+   */
+  async getAllUsers() {
+    // ใช้ supabaseAdmin เพื่อข้าม RLS และดึงข้อมูลทั้งหมดได้
+    const { data, error } = await supabaseAdmin.from('profiles').select('*');
+    if (error) throw new Error(`ไม่สามารถดึงข้อมูลผู้ใช้ทั้งหมดได้: ${error.message}`);
+    return data || [];
+  }
+
+  /**
+   * แปลงข้อมูลดิบของประวัติการประเมินให้พร้อมใช้งานสำหรับ Frontend
+   * @private
+   */
+  #transformEvaluationData(submission) {
+    let displayStatus = 'รอการตรวจสอบ';
+    const firstAssign = submission.assignments?.[0];
+
+    if (submission.status === 'rejected') {
+      displayStatus = 'ถูกปฏิเสธ';
+    } else if (submission.status === 'approved') {
+      if (firstAssign?.status === 'evaluated') {
+        displayStatus = 'ประเมินเสร็จสิ้น';
+      } else if (firstAssign) {
+        displayStatus = 'รอผู้เชี่ยวชาญประเมิน';
+      } else {
+        displayStatus = 'รอการมอบหมาย';
+      }
     }
 
-    async getAllUsers() {
-        const { data, error } = await supabase.from('profiles').select('*');
-        if (error) throw error;
-        return data;
+    const assignees = (submission.assignments || []).map(a => ({
+      assignment_id: a.id,
+      status: a.status,
+      total_score: a.total_score,
+      evaluator_name: [a.evaluator?.first_name, a.evaluator?.last_name].filter(Boolean).join(' ') || a.evaluator?.username || 'ผู้เชี่ยวชาญ',
+    }));
+
+    return {
+      id: submission.id,
+      betta_name: submission.fish_name,
+      evaluationDate: submission.submitted_at,
+      status: displayStatus,
+      images: submission.fish_image_urls,
+      video: submission.fish_video_url,
+      betta_type: submission.fish_type,
+      betta_age_months: submission.fish_age_months, // ส่งค่าเดิม
+      fish_age_months: submission.fish_age_months,   // เพิ่มเพื่อความเข้ากันได้
+      assignees,
+    };
+  }
+
+  /**
+   * ดึงประวัติการส่งประเมินคุณภาพ (ไม่ใช่การประกวด)
+   * @param {string} userId - UUID ของผู้ใช้
+   * @returns {Promise<Array>}
+   */
+  async getEvaluationHistory(userId) {
+    const { data, error } = await supabaseAdmin
+      .from('submissions')
+      .select(`
+        id, fish_name, fish_type, fish_age_months, fish_image_urls, fish_video_url, submitted_at, status,
+        assignments (id, status, total_score, evaluator:profiles(first_name, last_name, username))
+      `)
+      .eq('owner_id', userId)
+      .is('contest_id', null)
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`ไม่สามารถดึงประวัติการประเมินได้: ${error.message}`);
     }
 
-    async getEvaluationHistory(userId) {
-        const { data, error } = await supabase
-            .from('submissions')
-            .select(`id, fish_name, fish_type, fish_age_months, fish_image_urls, fish_video_url, submitted_at, status, final_score, assignments ( status, total_score, evaluator:profiles(first_name) )`)
-            .eq('owner_id', userId)
-            .is('contest_id', null)
-            .order('submitted_at', { ascending: false });
+    return (data || []).map(this.#transformEvaluationData);
+  }
 
-        if (error) {
-            throw new Error('ไม่สามารถดึงประวัติการประเมินได้: ' + error.message);
-        }
+  /**
+   * ดึงประวัติการเข้าร่วมการแข่งขัน
+   * @param {string} userId - UUID ของผู้ใช้
+   * @returns {Promise<Array>}
+   */
+  async getCompetitionHistory(userId) {
+    const { data, error } = await supabaseAdmin
+      .from('submissions')
+      .select(`id, fish_name, submitted_at, status, final_score, contest:contests(name, status)`)
+      .eq('owner_id', userId)
+      .not('contest_id', 'is', null)
+      .order('submitted_at', { ascending: false });
 
-        const processedData = data.map(sub => {
-            let displayStatus = 'รอการตรวจสอบ';
-            let detail = '';
-            if (sub.status === 'rejected') {
-                displayStatus = 'ถูกปฏิเสธ';
-            } else if (sub.status === 'approved') {
-                if (sub.assignments && sub.assignments.length > 0 && sub.assignments[0].status === 'evaluated') {
-                    displayStatus = 'ประเมินเสร็จสิ้น';
-                    detail = `คะแนน: ${sub.assignments[0].total_score || 'N/A'}`;
-                } else {
-                    displayStatus = 'รอผู้เชี่ยวชาญประเมิน';
-                    detail = `มอบหมายให้: ${sub.assignments[0]?.evaluator?.first_name || 'ผู้เชี่ยวชาญ'}`;
-                }
-            }
-            return {
-                id: sub.id,
-                betta_name: sub.fish_name,
-                evaluationDate: sub.submitted_at,
-                status: displayStatus,
-                detail: detail,
-                images: sub.fish_image_urls,
-                video: sub.fish_video_url,
-                fish_type: sub.fish_type,
-                fish_age_months: sub.fish_age_months,
-                raw_assignments: sub.assignments
-            };
-        });
-        return processedData;
+    if (error) {
+      throw new Error(`ไม่สามารถดึงประวัติการแข่งขันได้: ${error.message}`);
     }
-
-    /**
-     * [ฟังก์ชันใหม่] ดึงประวัติการเข้าร่วมประกวดของผู้ใช้
-     * @param {string} userId - UUID ของผู้ใช้
-     */
-    async getCompetitionHistory(userId) {
-        const { data, error } = await supabase
-            .from('submissions')
-            .select(`
-                id,
-                fish_name,
-                submitted_at,
-                status,
-                final_score,
-                contest:contests ( name, status )
-            `)
-            .eq('owner_id', userId)
-            .not('contest_id', 'is', null) // ดึงเฉพาะรายการที่มี contest_id
-            .order('submitted_at', { ascending: false });
-
-        if (error) {
-            throw new Error('ไม่สามารถดึงประวัติการแข่งขันได้: ' + error.message);
-        }
-        return data;
-    }
+    return data || [];
+  }
 }
 
 module.exports = new UserService();

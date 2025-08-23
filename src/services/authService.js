@@ -1,23 +1,22 @@
-// D:\ProJectFinal\Lasts\betta-fish-api\src\services\authService.js (ฉบับสมบูรณ์)
-
+// =======================================================================
+// File: D:\ProJectFinal\Lasts\betta-fish-api\src\services\authService.js (ฉบับสมบูรณ์ ยืนยันแล้ว)
+// =======================================================================
 const { supabase } = require('../config/supabase');
 
 class AuthService {
 
     /**
      * ===================================================================
-     * ▼▼▼ [ส่วนที่อัปเดต] ฟังก์ชันสำหรับสมัครสมาชิก (Sign Up) ▼▼▼
+     * ฟังก์ชันสำหรับสมัครสมาชิก (Sign Up)
      * ===================================================================
      * @param {object} userData - ข้อมูลผู้ใช้จากฟอร์ม { email, password, firstName, lastName, username }
      */
     async signUp(userData) {
         const { email, password, firstName, lastName, username } = userData;
 
-        // ขั้นตอนที่ 1: เราจะสร้างผู้ใช้ในระบบ Authentication ของ Supabase เพียงขั้นตอนเดียว
-        // โดยแนบข้อมูลโปรไฟล์ทั้งหมด (first_name, last_name, username, role) 
-        // เข้าไปใน property `options.data`
-        // เพื่อให้ Database Trigger ที่ชื่อว่า `handle_new_user` เป็นผู้จัดการนำข้อมูลนี้
-        // ไปสร้างแถวใหม่ในตาราง `public.profiles` ให้เราโดยอัตโนมัติ
+        // สร้างผู้ใช้ในระบบ Authentication ของ Supabase
+        // โดยแนบข้อมูลโปรไฟล์ทั้งหมด (รวมถึงการบังคับ role: 'user')
+        // เข้าไปใน property `options.data` เพื่อให้ Database Trigger จัดการสร้างโปรไฟล์โดยอัตโนมัติ
         const { data, error } = await supabase.auth.signUp({
             email,
             password,
@@ -26,24 +25,20 @@ class AuthService {
                     first_name: firstName,
                     last_name: lastName,
                     username: username,
-                    role: 'user' // กำหนด role เริ่มต้นสำหรับผู้ใช้ใหม่ทุกคน
+                    role: 'user' // บังคับให้ผู้ใช้ใหม่ทุกคนมี role เป็น 'user' เพื่อความปลอดภัย
                 }
             }
         });
 
-        // ขั้นตอนที่ 2: ตรวจสอบ Error ที่อาจเกิดขึ้นจากการสร้างผู้ใช้ในระบบ Auth
+        // ตรวจสอบ Error ที่อาจเกิดขึ้นจากการสร้างผู้ใช้ในระบบ Auth
         if (error) {
-            // ดักจับ Error ที่พบบ่อยและแปลงเป็นข้อความภาษาไทยที่เข้าใจง่าย
+            // ดักจับ Error ที่พบบ่อยและแปลงเป็นข้อความที่เข้าใจง่าย
             if (error.message.includes('User already registered')) {
                 throw new Error('มีผู้ใช้อีเมลนี้ในระบบแล้ว');
             }
             // หากเป็น Error อื่นๆ ให้ส่งข้อความจาก Supabase ไปตรงๆ
             throw new Error('Supabase Auth Error: ' + error.message);
         }
-
-        // [สำคัญ] เราจะไม่ใช้คำสั่ง `supabase.from('profiles').insert(...)` ในฝั่ง API อีกต่อไป
-        // เพราะเราเชื่อมั่นใน Trigger ของฐานข้อมูล ซึ่งเป็นวิธีที่ปลอดภัยและป้องกัน
-        // ปัญหา "ผู้ใช้กำพร้า" (มี Auth แต่ไม่มี Profile) ได้ 100%
 
         // ตรวจสอบเผื่อกรณีสุดวิสัยที่ Supabase ไม่ได้คืนข้อมูล user กลับมา
         if (!data.user) {
@@ -56,7 +51,7 @@ class AuthService {
 
     /**
      * ===================================================================
-     * ฟังก์ชันสำหรับเข้าสู่ระบบ (Sign In) - (โค้ดเดิม สมบูรณ์ดีอยู่แล้ว)
+     * ฟังก์ชันสำหรับเข้าสู่ระบบ (Sign In)
      * ===================================================================
      */
     async signIn(email, password) {
@@ -93,7 +88,7 @@ class AuthService {
 
     /**
      * ===================================================================
-     * ฟังก์ชันสำหรับออกจากระบบ (Sign Out) - (โค้ดเดิม สมบูรณ์ดีอยู่แล้ว)
+     * ฟังก์ชันสำหรับออกจากระบบ (Sign Out)
      * ===================================================================
      */
     async signOut() {

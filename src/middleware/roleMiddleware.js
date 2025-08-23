@@ -1,29 +1,37 @@
-// D:\ProJectFinal\Lasts\betta-fish-api\src\middleware\roleMiddleware.js
-const { supabase } = require('../config/supabase');
+// D:\ProJectFinal\Lasts\betta-fish-api\src/middleware/roleMiddleware.js
+/**
+ * Middleware Factory สำหรับตรวจสอบ Role ของผู้ใช้
+ * @param {string|string[]} requiredRoles - Role ที่ต้องการ (สามารถเป็น String เดียว หรือ Array ของ Strings)
+ * @returns {Function} - Middleware function สำหรับ Express
+ */
+const checkRole = (requiredRoles) => {
+  
+  return (req, res, next) => {
+    // 1. ดึง userRole ที่ถูกแนบมาจาก authMiddleware
+    const userRole = req.userRole;
 
-const checkRole = (requiredRole) => async (req, res, next) => {
-  if (!req.userId) {
-    return res.status(401).json({ error: 'ไม่สามารถระบุตัวตนผู้ใช้ได้' });
-  }
-
-  try {
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', req.userId)
-      .single();
-    
-    if (error || !profile) {
-      return res.status(404).json({ error: 'ไม่พบโปรไฟล์ผู้ใช้' });
+    // 2. ตรวจสอบว่ามี userRole หรือไม่
+    if (!userRole) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'ไม่สามารถระบุ Role ของผู้ใช้ได้' 
+      });
     }
 
-    if (profile.role !== requiredRole) {
-      return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+    // 3. ทำให้ requiredRoles เป็น Array เสมอ เพื่อให้รองรับทั้ง String และ Array
+    const rolesToCheck = Array.isArray(requiredRoles) ? requiredRoles : [requiredRoles];
+
+    // 4. ตรวจสอบว่า Role ของผู้ใช้ อยู่ในรายการ Role ที่ได้รับอนุญาตหรือไม่
+    if (!rolesToCheck.includes(userRole)) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' 
+      });
     }
     
+    // 5. หากสิทธิ์ถูกต้อง ให้ผ่านไปยังขั้นตอนถัดไป
     next();
-  } catch (err) {
-    res.status(500).json({ error: 'เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์' });
-  }
+  };
 };
+
 module.exports = checkRole;

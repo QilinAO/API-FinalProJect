@@ -1,172 +1,215 @@
-// D:\ProJectFinal\Lasts\betta-fish-api\src\controllers\expertController.js (ฉบับสมบูรณ์)
-
-// --- ส่วนที่ 1: การนำเข้า (Imports) ---
+// ======================================================================
+// File: src/controllers/expertController.js
+// หน้าที่: จัดการ Logic การทำงานทั้งหมดที่เกี่ยวข้องกับผู้เชี่ยวชาญ (Expert)
+// ======================================================================
 
 const ExpertService = require('../services/expertService');
+const checklistNotifier = require('../services/checklistNotifierService');
 
-
-// --- ส่วนที่ 2: Controller Class ---
+/**
+ * Utility function สำหรับครอบ (wrap) async route handlers
+ * เพื่อจัดการ Error และส่งต่อไปยัง Global Error Handler โดยอัตโนมัติ
+ */
+const asyncWrapper = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
 
 class ExpertController {
+  /**
+   * ดึงข้อมูลสรุปสำหรับ Dashboard
+   * Route: GET /api/experts/dashboard
+   */
+  getDashboard = asyncWrapper(async (req, res) => {
+    const stats = await ExpertService.getDashboardStats(req.userId);
+    res.json({ success: true, data: stats });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับหน้า Dashboard
-     * ===================================================================
-     */
-    async getDashboardStats(req, res) {
-        try {
-            const stats = await ExpertService.getDashboardStats(req.userId);
-            res.json({ success: true, data: stats });
-        } catch (error) {
-            res.status(500).json({ success: false, error: error.message });
-        }
+  /**
+   * ดึงข้อมูลโปรไฟล์ของผู้เชี่ยวชาญ
+   * Route: GET /api/experts/profile
+   */
+  getProfile = asyncWrapper(async (req, res) => {
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: profile, error } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', req.userId)
+      .single();
+    
+    if (error) {
+      return res.status(400).json({ success: false, error: 'ไม่สามารถดึงข้อมูลโปรไฟล์ได้' });
     }
 
-    /**
-     * ===================================================================
-     * Controller สำหรับหน้า Queue งานประเมิน
-     * ===================================================================
-     */
-    async getEvaluationQueue(req, res) {
-        try {
-            const queue = await ExpertService.getEvaluationQueue(req.userId);
-            res.json({ success: true, data: queue });
-        } catch (error) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    }
+    res.json({ success: true, data: profile });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับตอบรับ/ปฏิเสธ งานประเมินคุณภาพ
-     * ===================================================================
-     */
-    async respondToEvaluation(req, res) {
-        try {
-            const { assignmentId } = req.params;
-            const { status, reason } = req.body;
-            const result = await ExpertService.respondToEvaluation(assignmentId, req.userId, status, reason);
-            res.json({ success: true, data: result });
-        } catch (error) {
-            // [อัปเดต] เปลี่ยนจาก 403 เป็น 400 (Bad Request)
-            // เพื่อบ่งบอกว่าเป็นข้อผิดพลาดจากคำขอของผู้ใช้ (เช่น งานไม่มีอยู่แล้ว)
-            // และป้องกันการ Logout อัตโนมัติ
-            res.status(400).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * อัปเดตโปรไฟล์ของผู้เชี่ยวชาญ
+   * Route: PUT /api/experts/profile
+   */
+  updateProfile = asyncWrapper(async (req, res) => {
+    const UserService = require('../services/userService');
+    const updatedProfile = await UserService.updateProfile(req.userId, req.body);
+    res.json({ success: true, data: updatedProfile });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับส่งคะแนนการประเมินคุณภาพ
-     * ===================================================================
-     */
-    async submitQualityScores(req, res) {
-        try {
-            const { assignmentId } = req.params;
-            const scoresData = req.body;
-            const result = await ExpertService.submitQualityScores(assignmentId, req.userId, scoresData);
-            res.json({ success: true, data: result });
-        } catch (error) {
-            // [อัปเดต] เปลี่ยนจาก 403 เป็น 400 (Bad Request)
-            res.status(400).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * ดึงรายการมอบหมายงานทั้งหมด
+   * Route: GET /api/experts/assignments
+   */
+  getMyAssignments = asyncWrapper(async (req, res) => {
+    const assignments = await ExpertService.getMyAssignments(req.userId);
+    res.json({ success: true, data: assignments });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับหน้า Judging
-     * ===================================================================
-     */
-    async getJudgingContests(req, res) {
-        try {
-            const contests = await ExpertService.getJudgingContests(req.userId);
-            res.json({ success: true, data: contests });
-        } catch (error) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * ดึงงานที่รอการประเมิน
+   * Route: GET /api/experts/assignments/pending
+   */
+  getPendingAssignments = asyncWrapper(async (req, res) => {
+    const assignments = await ExpertService.getPendingAssignments(req.userId);
+    res.json({ success: true, data: assignments });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับตอบรับ/ปฏิเสธ คำเชิญเป็นกรรมการ
-     * ===================================================================
-     */
-    async respondToJudgeInvitation(req, res) {
-        try {
-            const { contestId } = req.params;
-            const { response } = req.body;
-            const result = await ExpertService.respondToJudgeInvitation(contestId, req.userId, response);
-            res.json({ success: true, data: result });
-        } catch (error) {
-            // [อัปเดต] เปลี่ยนจาก 403 เป็น 400 (Bad Request)
-            res.status(400).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * ดึงรายละเอียดงานประเมิน
+   * Route: GET /api/experts/assignments/:assignmentId
+   */
+  getAssignmentDetails = asyncWrapper(async (req, res) => {
+    const { assignmentId } = req.params;
+    const assignment = await ExpertService.getAssignmentDetails(assignmentId, req.userId);
+    res.json({ success: true, data: assignment });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับดึงรายชื่อปลาในแต่ละการประกวด
-     * ===================================================================
-     */
-    async getFishInContest(req, res) {
-        try {
-            const { contestId } = req.params;
-            const submissions = await ExpertService.getFishInContest(contestId, req.userId);
-            res.json({ success: true, data: submissions });
-        } catch (error) {
-            // [อัปเดต] เปลี่ยนจาก 403 เป็น 400 (Bad Request)
-            res.status(400).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * ส่งผลการประเมิน
+   * Route: POST /api/experts/assignments/:assignmentId/evaluate
+   */
+  submitEvaluation = asyncWrapper(async (req, res) => {
+    const { assignmentId } = req.params;
+    const result = await ExpertService.submitEvaluation(assignmentId, req.userId, req.body);
+    res.json({ success: true, data: result });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับส่งคะแนนปลากัดในการแข่งขัน
-     * ===================================================================
-     */
-    async submitCompetitionScore(req, res) {
-        try {
-            const { submissionId } = req.params;
-            const scoresData = req.body;
-            const result = await ExpertService.submitCompetitionScore(submissionId, req.userId, scoresData);
-            res.json({ success: true, data: result });
-        } catch (error) {
-            // [อัปเดต] เปลี่ยนจาก 403 เป็น 400 (Bad Request)
-            res.status(400).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * อัปเดตคะแนน
+   * Route: PUT /api/experts/assignments/:assignmentId/scores
+   */
+  updateScores = asyncWrapper(async (req, res) => {
+    const { assignmentId } = req.params;
+    const result = await ExpertService.updateScores(assignmentId, req.userId, req.body);
+    res.json({ success: true, data: result });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับดึงประวัติการทำงาน
-     * ===================================================================
-     */
-    async getExpertHistory(req, res) {
-        try {
-            const { type } = req.query;
-            if (!type) return res.status(400).json({ success: false, error: 'กรุณาระบุประเภทของประวัติ' });
-            const history = await ExpertService.getExpertHistory(req.userId, type);
-            res.json({ success: true, data: history });
-        } catch (error) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * ปฏิเสธงาน
+   * Route: POST /api/experts/assignments/:assignmentId/reject
+   */
+  rejectAssignment = asyncWrapper(async (req, res) => {
+    const { assignmentId } = req.params;
+    const { reason } = req.body;
+    const result = await ExpertService.rejectAssignment(assignmentId, req.userId, reason);
+    res.json({ success: true, data: result });
+  });
 
-    /**
-     * ===================================================================
-     * Controller สำหรับดึงเกณฑ์การให้คะแนน
-     * ===================================================================
-     */
-    async getScoringSchema(req, res) {
-        try {
-            const { bettaType } = req.params;
-            const schema = await ExpertService.getScoringSchema(bettaType);
-            res.json({ success: true, data: schema });
-        } catch (error) {
-            res.status(404).json({ success: false, error: error.message });
-        }
-    }
+  /**
+   * ดึงคิวงานประเมินคุณภาพ
+   * Route: GET /api/experts/queue
+   */
+  getEvaluationQueue = asyncWrapper(async (req, res) => {
+    const queue = await ExpertService.getEvaluationQueue(req.userId);
+    res.json({ success: true, data: queue });
+  });
+
+  /**
+   * ดึงงานประเมินถัดไป
+   * Route: GET /api/experts/queue/next
+   */
+  getNextEvaluation = asyncWrapper(async (req, res) => {
+    const next = await ExpertService.getNextEvaluation(req.userId);
+    res.json({ success: true, data: next });
+  });
+
+  /**
+   * รับงานประเมิน
+   * Route: POST /api/experts/queue/:submissionId/claim
+   */
+  claimEvaluation = asyncWrapper(async (req, res) => {
+    const { submissionId } = req.params;
+    const result = await ExpertService.claimEvaluation(submissionId, req.userId);
+    res.json({ success: true, data: result });
+  });
+
+  /**
+   * ดึงการประกวดที่เป็นกรรมการ
+   * Route: GET /api/experts/contests/judging
+   */
+  getJudgingContests = asyncWrapper(async (req, res) => {
+    const contests = await ExpertService.getJudgingContests(req.userId);
+    res.json({ success: true, data: contests });
+  });
+
+  /**
+   * ตอบรับการเป็นกรรมการ
+   * Route: POST /api/experts/contests/:contestId/accept
+   */
+  acceptJudging = asyncWrapper(async (req, res) => {
+    const { contestId } = req.params;
+    const result = await ExpertService.acceptJudging(contestId, req.userId);
+
+    checklistNotifier.onJudgeAccept(contestId, req.userId).catch(err =>
+      console.warn('[ChecklistNotifier] JudgeAccept notification failed:', err.message)
+    );
+
+    res.json({ success: true, data: result });
+  });
+
+  /**
+   * ปฏิเสธการเป็นกรรมการ
+   * Route: POST /api/experts/contests/:contestId/decline
+   */
+  declineJudging = asyncWrapper(async (req, res) => {
+    const { contestId } = req.params;
+    const { reason } = req.body;
+    const result = await ExpertService.declineJudging(contestId, req.userId, reason);
+    res.json({ success: true, data: result });
+  });
+
+  /**
+   * ดึงประวัติการประเมิน
+   * Route: GET /api/experts/history/evaluations
+   */
+  getEvaluationHistory = asyncWrapper(async (req, res) => {
+    const history = await ExpertService.getEvaluationHistory(req.userId);
+    res.json({ success: true, data: history });
+  });
+
+  /**
+   * ดึงประวัติการเป็นกรรมการ
+   * Route: GET /api/experts/history/contests
+   */
+  getJudgingHistory = asyncWrapper(async (req, res) => {
+    const history = await ExpertService.getJudgingHistory(req.userId);
+    res.json({ success: true, data: history });
+  });
+
+  /**
+   * ดึงสถิติประสิทธิภาพ
+   * Route: GET /api/experts/stats/performance
+   */
+  getPerformanceStats = asyncWrapper(async (req, res) => {
+    const stats = await ExpertService.getPerformanceStats(req.userId);
+    res.json({ success: true, data: stats });
+  });
+
+  /**
+   * ดึงสถิติภาระงาน
+   * Route: GET /api/experts/stats/workload
+   */
+  getWorkloadStats = asyncWrapper(async (req, res) => {
+    const stats = await ExpertService.getWorkloadStats(req.userId);
+    res.json({ success: true, data: stats });
+  });
 }
 
 module.exports = new ExpertController();

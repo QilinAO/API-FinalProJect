@@ -1,69 +1,146 @@
+// D:\ProJectFinal\Lasts\my-project\src\app.js
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-require('dotenv').config();
 
-// --- Import Routes (นำเข้าเส้นทาง API ต่างๆ) ---
-// [แก้ไข] เปลี่ยนชื่อไฟล์ให้ตรงกับไฟล์ที่มีอยู่จริง
-const authRoutes = require('./routes/auth'); // จาก 'authRoutes' เป็น 'auth'
-const userRoutes = require('./routes/users'); // จาก 'userRoutes' เป็น 'users'
-const managerRoutes = require('./routes/managerRoutes');
-const expertRoutes = require('./routes/expertRoutes');
-const submissionRoutes = require('./routes/submissionRoutes');
-const publicRoutes = require('./routes/publicRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
-const adminRoutes = require('./routes/adminRoutes');
+const errorReporter = require('./utils/errorReporter');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// === Middleware Setup (ตั้งค่า Middleware ทั่วไป) ===
-app.use(helmet());
+app.set('trust proxy', 1);
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
+
+const parseOrigins = (s) =>
+  (s || 'http://localhost:5173')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+const ALLOWED_ORIGINS = parseOrigins(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '');
 
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173', 
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`Origin ${origin} not allowed by CORS`));
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-user-id'],
 };
-app.use(cors(corsOptions));
 
-app.use(morgan('combined'));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+app.use((err, req, res, next) => {
+  if (err && String(err.message || '').includes('not allowed by CORS')) {
+    try { errorReporter.report(err, req, { context: 'CORS' }); } catch {}
+    return res.status(403).json({ success: false, error: err.message });
+  }
+  return next(err);
+});
+
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+app.get('/health', (_req, res) => res.json({ success: true, status: 'OK' }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
-  message: { success: false, error: 'คำขอมากเกินไป กรุณาลองใหม่ในภายหลัง' }
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'คำขอมากเกินไป กรุณาลองใหม่ในภายหลัง' },
+  handler: (req, res, _next, options) => {
+    const err = new Error('Too many requests');
+    err.status = 429;
+    try { errorReporter.report(err, req, { context: 'rate-limit' }); } catch {}
+    res.status(429).json(options.message);
+  },
 });
-app.use('/api/', limiter); 
+app.use('/api', limiter);
 
-// === API Routes (กำหนดเส้นทาง API หลัก) ===
+const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/users');
+const managerRoutes = require('./routes/managerRoutes');
+const expertRoutes = require('./routes/expertRoutes');
+const submissionRoutes = require('./routes/submissionRoutes');
+const publicRoutes = require('./routes/publicRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/manager', managerRoutes);
 app.use('/api/experts', expertRoutes);
 app.use('/api/submissions', submissionRoutes);
 app.use('/api/public', publicRoutes);
-app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api', notificationRoutes);
 
-// --- Health Check Endpoint ---
-app.get('/health', (req, res) => res.json({ status: 'OK' }));
-
-// --- Error Handling Middleware (จัดการข้อผิดพลาด) ---
-app.use((req, res, next) => {
-  res.status(404).json({ error: 'Endpoint Not Found' });
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: 'Endpoint Not Found' });
 });
 
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Internal Server Error' });
+// Import enhanced error handlers
+const { handleDatabaseError } = require('./middleware/databaseErrorHandler');
+
+// Database error handling middleware (before global error handler)
+app.use(handleDatabaseError);
+
+// Global error handler
+app.use((err, req, res, _next) => {
+  try { errorReporter.report(err, req, { context: 'global-error' }); } catch {}
+  
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('[Unhandled Error]', err.stack || err);
+  } else {
+    console.error('[Unhandled Error]', err.message);
+  }
+
+  // Enhanced error response with validation details
+  const response = {
+    success: false,
+    error: err.message || 'Internal Server Error',
+    timestamp: new Date().toISOString()
+  };
+
+  // Add validation details if available
+  if (err.details && Array.isArray(err.details)) {
+    response.details = err.details;
+  }
+
+  // Add debug info in development
+  if (process.env.NODE_ENV === 'development' && err.stack) {
+    response.debug = {
+      stack: err.stack,
+      code: err.code
+    };
+  }
+
+  res.status(err.status || 500).json(response);
 });
 
-// --- Server Start (เริ่ม Server) ---
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  try { errorReporter.reportProcessError(err, 'unhandledRejection'); } catch {}
+});
+
+process.on('uncaughtException', (err) => {
+  try { errorReporter.reportProcessError(err, 'uncaughtException'); } catch {}
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 Server is flying on port ${PORT}`);
-  console.log(`   CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`); 
+  console.log(`Server is flying on port ${PORT}`);
+  console.log(`Allowed CORS origins: ${ALLOWED_ORIGINS.join(', ') || '(none)'}`);
 });

@@ -1,73 +1,191 @@
-// D:\ProJectFinal\Lasts\betta-fish-api\src\routes\expertRoutes.js (ฉบับสมบูรณ์)
+// ======================================================================
+// File: src/routes/expertRoutes.js
+// หน้าที่: กำหนด Routes สำหรับ Expert functions (เพิ่ม specialities management)
+// ======================================================================
 
-// --- ส่วนที่ 1: การนำเข้า (Imports) ---
+const express = require('express');
+const router = express.Router();
 
-const router = require('express').Router();
+// Controllers
 const expertController = require('../controllers/expertController');
+
+// Middlewares
 const authMiddleware = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
 
+// ใช้ authentication middleware สำหรับทุก route
+router.use(authMiddleware);
 
-// --- ส่วนที่ 2: การใช้ Middleware แบบครอบคลุม ---
+// ใช้ role middleware สำหรับ expert เท่านั้น
+router.use(checkRole('expert'));
 
-// กำหนดให้ทุก Route ในไฟล์นี้ต้องผ่านการตรวจสอบ Token และ Role 'expert' ก่อนเสมอ
-router.use(authMiddleware, checkRole('expert'));
+// ============= Expert Dashboard Routes =============
+router.get('/dashboard', expertController.getDashboard);
+router.get('/profile', expertController.getProfile);
+router.put('/profile', expertController.updateProfile);
 
+// ============= Assignment Routes =============
+router.get('/assignments', expertController.getMyAssignments);
+router.get('/assignments/pending', expertController.getPendingAssignments);
+router.get('/assignments/:assignmentId', expertController.getAssignmentDetails);
 
-// --- ส่วนที่ 3: การกำหนดเส้นทาง (Route Definitions) ---
+// ============= Evaluation Routes =============
+router.post('/assignments/:assignmentId/evaluate', expertController.submitEvaluation);
+router.put('/assignments/:assignmentId/scores', expertController.updateScores);
+router.post('/assignments/:assignmentId/reject', expertController.rejectAssignment);
 
-// ========================================================
-// Dashboard
-// ========================================================
-// URL: GET /api/experts/dashboard
-router.get('/dashboard', expertController.getDashboardStats);
+// ============= Contest Judging Routes =============
+router.get('/contests/judging', expertController.getJudgingContests);
+router.post('/contests/:contestId/accept', expertController.acceptJudging);
+router.post('/contests/:contestId/decline', expertController.declineJudging);
 
-
-// ========================================================
-// Quality Evaluation Queue (คิวงานประเมินคุณภาพ)
-// ========================================================
-// URL: GET /api/experts/queue
+// ============= Queue Management Routes =============
 router.get('/queue', expertController.getEvaluationQueue);
+router.get('/queue/next', expertController.getNextEvaluation);
+router.post('/queue/:submissionId/claim', expertController.claimEvaluation);
 
-// URL: POST /api/experts/assignments/:assignmentId/respond
-router.post('/assignments/:assignmentId/respond', expertController.respondToEvaluation);
+// ============= Specialities Management Routes =============
+/**
+ * GET /api/experts/specialities
+ * ดึงรายการความเชี่ยวชาญของผู้เชี่ยวชาญ
+ */
+router.get('/specialities', async (req, res) => {
+  try {
+    const { supabaseAdmin } = require('../config/supabase');
+    
+    const { data: profile, error } = await supabaseAdmin
+      .from('profiles')
+      .select('specialities')
+      .eq('id', req.userId)
+      .single();
+    
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        error: 'ไม่สามารถดึงข้อมูลความเชี่ยวชาญได้'
+      });
+    }
 
-// URL: POST /api/experts/assignments/:assignmentId/score
-router.post('/assignments/:assignmentId/score', expertController.submitQualityScores);
+    res.json({
+      success: true,
+      data: {
+        specialities: profile?.specialities || []
+      }
+    });
+  } catch (error) {
+    console.error('[Expert] Error getting specialities:', error);
+    res.status(500).json({
+      success: false,
+      error: 'เกิดข้อผิดพลาดในการดึงข้อมูล'
+    });
+  }
+});
 
+/**
+ * PUT /api/experts/specialities
+ * อัปเดตความเชี่ยวชาญของผู้เชี่ยวชาญ
+ */
+router.put('/specialities', async (req, res) => {
+  try {
+    const { specialities } = req.body;
+    
+    // Validate input
+    if (!Array.isArray(specialities)) {
+      return res.status(400).json({
+        success: false,
+        error: 'ความเชี่ยวชาญต้องเป็น array'
+      });
+    }
 
-// ========================================================
-// Competition Judging (การตัดสินการแข่งขัน)
-// ========================================================
-// URL: GET /api/experts/judging
-router.get('/judging', expertController.getJudgingContests);
+    // Validate each specialty
+    const validSpecialities = specialities.filter(s => 
+      typeof s === 'string' && s.trim().length > 0
+    ).map(s => s.trim());
 
-// URL: POST /api/experts/judging/:contestId/respond
-router.post('/judging/:contestId/respond', expertController.respondToJudgeInvitation);
+    if (validSpecialities.length > 10) {
+      return res.status(400).json({
+        success: false,
+        error: 'สามารถระบุความเชี่ยวชาญได้สูงสุด 10 รายการ'
+      });
+    }
 
-// URL: GET /api/experts/judging/:contestId/submissions
-router.get('/judging/:contestId/submissions', expertController.getFishInContest);
+    const { supabaseAdmin } = require('../config/supabase');
+    
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .update({ 
+        specialities: validSpecialities,
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', req.userId)
+      .select()
+      .single();
+    
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        error: 'ไม่สามารถอัปเดตความเชี่ยวชาญได้'
+      });
+    }
 
-// URL: POST /api/experts/judging/submissions/:submissionId/score
-router.post('/judging/submissions/:submissionId/score', expertController.submitCompetitionScore);
+    res.json({
+      success: true,
+      message: 'อัปเดตความเชี่ยวชาญสำเร็จ',
+      data: {
+        specialities: data.specialities
+      }
+    });
+  } catch (error) {
+    console.error('[Expert] Error updating specialities:', error);
+    res.status(500).json({
+      success: false,
+      error: 'เกิดข้อผิดพลาดในการอัปเดต'
+    });
+  }
+});
 
+/**
+ * GET /api/experts/specialities/suggestions
+ * ดึงรายการความเชี่ยวชาญที่แนะนำ
+ */
+router.get('/specialities/suggestions', (req, res) => {
+  const suggestions = [
+    // ประเภทหลัก
+    'Halfmoon', 'Plakat', 'Crowntail', 'Veiltail', 'Doubletail',
+    
+    // สี
+    'Red', 'Blue', 'Yellow', 'Green', 'White', 'Black', 'Multicolor',
+    
+    // ลวดลาย
+    'Marble', 'Butterfly', 'Dragon', 'Galaxy', 'Solid',
+    
+    // ขนาด
+    'Giant', 'Standard', 'Female',
+    
+    // การใช้งาน
+    'Show Quality', 'Breeding', 'Fighting', 'Pet Quality',
+    
+    // ความเชี่ยวชาญพิเศษ
+    'Genetics', 'Disease Treatment', 'Nutrition', 'Breeding Program',
+    
+    // ประเภทภาษาไทย
+    'ปลากัดไทย', 'ปลากัดสวยงาม', 'ปลากัดแฟนซี', 'ปลากัดยักษ์'
+  ];
 
-// ===================================================================
-// ▼▼▼ [ส่วนที่เพิ่มใหม่] สำหรับ Dynamic Scoring Form ▼▼▼
-// ===================================================================
-// URL: GET /api/experts/scoring-schema/:bettaType
-// (เช่น /api/experts/scoring-schema/ปลากัดพื้นบ้านภาคใต้)
-router.get('/scoring-schema/:bettaType', expertController.getScoringSchema);
+  res.json({
+    success: true,
+    data: {
+      suggestions: suggestions.sort()
+    }
+  });
+});
 
+// ============= History Routes =============
+router.get('/history/evaluations', expertController.getEvaluationHistory);
+router.get('/history/contests', expertController.getJudgingHistory);
 
-// ========================================================
-// History & Profile
-// ========================================================
-// URL: GET /api/experts/history
-router.get('/history', expertController.getExpertHistory);
-// (หมายเหตุ: Profile ใช้ Route กลางที่ /api/users/profile ซึ่งถูกต้องอยู่แล้ว)
-
-
-// --- ส่วนที่ 4: การส่งออก (Export) ---
+// ============= Statistics Routes =============
+router.get('/stats/performance', expertController.getPerformanceStats);
+router.get('/stats/workload', expertController.getWorkloadStats);
 
 module.exports = router;

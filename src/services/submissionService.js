@@ -1,106 +1,106 @@
-const { supabase } = require('../config/supabase');
-const NotificationService = require('./notificationService');
+// ======================================================================
+// File: src/services/submissionService.js
+// โหมด: ใช้ supabaseAdmin.rpc เพื่อ bypass RLS (สูตร B)
+// มีทั้ง createSubmission (compat) และ createSubmissionAdmin
+// ======================================================================
+
+'use strict';
+
+const { supabaseAdmin } = require('../config/supabase');
+
+function toStringArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null) return [];
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return [];
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (_) {
+      return s.split(',').map((x) => x.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function isUuidLike(s) {
+  return typeof s === 'string' && /^[0-9a-fA-F-]{36}$/.test(s);
+}
 
 class SubmissionService {
+  #sanitize(params = {}) {
+    const {
+      p_owner_id,
+      p_contest_id,
+      p_fish_name,
+      p_fish_type,
+      p_fish_age_months,
+      p_fish_image_urls,
+      p_fish_video_url,
+    } = params;
 
-    async #getRandomExpertBySpeciality(bettaType) {
-        let { data: experts, error } = await supabase
-            .from('profiles')
-            .select('id, specialities')
-            .eq('role', 'expert')
-            .not('specialities', 'is', null);
+    const ownerId = isUuidLike(p_owner_id) ? p_owner_id : null;
+    const contestId = p_contest_id || null;
 
-        if (error) {
-            console.error("Error fetching experts:", error);
-            throw error;
-        }
-        if (!experts || experts.length === 0) {
-            console.warn("No experts with specialities found.");
-            return null;
-        }
-        let primaryMatches = experts.filter(e => Array.isArray(e.specialities) && e.specialities[0] === bettaType);
-        if (primaryMatches.length > 0) {
-            const selectedExpert = primaryMatches[Math.floor(Math.random() * primaryMatches.length)];
-            return selectedExpert.id;
-        }
-        let secondaryMatches = experts.filter(e => Array.isArray(e.specialities) && e.specialities[1] === bettaType);
-        if (secondaryMatches.length > 0) {
-            const selectedExpert = secondaryMatches[Math.floor(Math.random() * secondaryMatches.length)];
-            return selectedExpert.id;
-        }
-        const anyExpert = experts[Math.floor(Math.random() * experts.length)];
-        return anyExpert.id;
+    const ageNum = parseInt(p_fish_age_months, 10);
+    const age = Number.isFinite(ageNum) ? ageNum : null;
+
+    const images = Array.from(
+      new Set(
+        toStringArray(p_fish_image_urls)
+          .map((u) => String(u).trim())
+          .filter(Boolean)
+      )
+    );
+
+    const videoUrl =
+      typeof p_fish_video_url === 'string' && p_fish_video_url.trim()
+        ? p_fish_video_url.trim()
+        : null;
+
+    return {
+      p_owner_id: ownerId,
+      p_contest_id: contestId,
+      p_fish_name: p_fish_name || null,
+      p_fish_type: p_fish_type || null,
+      p_fish_age_months: age,
+      p_fish_image_urls: images, // ส่งเป็น JS array ของ string
+      p_fish_video_url: videoUrl,
+    };
+  }
+
+  async #rpcCreate(payload) {
+    const { data, error } = await supabaseAdmin.rpc('create_full_submission', payload);
+    if (error) throw new Error(`RPC create_full_submission: ${error.message}`);
+    if (!data) throw new Error('RPC ไม่ได้คืนค่า submission ID');
+    return data; // UUID
+  }
+
+  /**
+   * ใช้โดย controller เดิม (compatible)
+   * คาดว่า controller ได้ตรวจ req.userId แล้วตั้ง p_owner_id มาให้แล้ว
+   */
+  async createSubmission(params) {
+    const payload = this.#sanitize(params);
+    if (!payload.p_owner_id) throw new Error('p_owner_id ไม่ถูกต้อง');
+    return this.#rpcCreate(payload);
+  }
+
+  /**
+   * เวอร์ชันเข้มงวด: ตรวจ owner ฝั่งเซิร์ฟเวอร์ด้วย
+   * @param {object} params - พารามิเตอร์ RPC
+   * @param {string} currentUserId - UUID ผู้ใช้จาก middleware
+   */
+  async createSubmissionAdmin(params, currentUserId) {
+    const payload = this.#sanitize(params);
+    if (!payload.p_owner_id) throw new Error('p_owner_id ไม่ถูกต้อง');
+    if (!isUuidLike(currentUserId)) throw new Error('currentUserId ไม่ถูกต้อง');
+    if (payload.p_owner_id !== currentUserId) {
+      throw new Error('forbidden: owner mismatch (server check)');
     }
-
-    async createSubmissionAndAssignments(submissionData) {
-        const { contest_id, ...restOfData } = submissionData;
-
-        const { data: newSubmission, error: submissionError } = await supabase
-            .from('submissions')
-            .insert({ ...restOfData, contest_id: contest_id || null, status: 'pending' })
-            .select()
-            .single();
-
-        if (submissionError) {
-            throw new Error('ไม่สามารถสร้าง Submission ได้: ' + submissionError.message);
-        }
-
-        if (contest_id) {
-            // --- Logic สำหรับการส่งเข้าประกวด ---
-            const { data: judges, error: judgeError } = await supabase
-                .from('contest_judges')
-                .select('judge_id')
-                .eq('contest_id', contest_id)
-                .eq('status', 'accepted');
-
-            if (judgeError) throw new Error('ไม่สามารถดึงรายชื่อกรรมการได้: ' + judgeError.message);
-
-            if (judges && judges.length > 0) {
-                const assignmentsToCreate = judges.map(j => ({
-                    submission_id: newSubmission.id,
-                    evaluator_id: j.judge_id,
-                    status: 'pending'
-                }));
-                const { error: assignmentError } = await supabase.from('assignments').insert(assignmentsToCreate);
-                if (assignmentError) {
-                    console.error(`สร้าง Submission สำเร็จ (ID: ${newSubmission.id}) แต่สร้าง Assignment สำหรับการประกวดไม่สำเร็จ:`, assignmentError.message);
-                }
-                console.log(`Successfully created submission ${newSubmission.id} for contest ${contest_id} and assigned to ${judges.length} judges.`);
-            } else {
-                console.warn(`Contest ID ${contest_id} has no accepted judges. Submission created without assignments.`);
-            }
-
-        } else {
-            // --- Logic สำหรับการประเมินคุณภาพ ---
-            const expertId = await this.#getRandomExpertBySpeciality(restOfData.fish_type);
-            if (!expertId) {
-                console.warn(`ไม่พบผู้เชี่ยวชาญในระบบเพื่อมอบหมายงานให้กับ Submission ID: ${newSubmission.id}`);
-                return newSubmission;
-            }
-            const { error: assignmentError } = await supabase
-                .from('assignments')
-                .insert({
-                    submission_id: newSubmission.id,
-                    evaluator_id: expertId,
-                    status: 'pending'
-                });
-
-            if (assignmentError) {
-                console.error(`สร้าง Submission สำเร็จ (ID: ${newSubmission.id}) แต่สร้าง Assignment ไม่สำเร็จ:`, assignmentError.message);
-                throw new Error('สร้าง Submission สำเร็จ แต่ไม่สามารถมอบหมายงานให้ผู้เชี่ยวชาญได้');
-            }
-            
-            // ▼▼▼▼▼ [ส่วนที่เพิ่มเข้ามา] สร้างการแจ้งเตือนส่งให้ Expert ▼▼▼▼▼
-            const message = `คุณได้รับมอบหมายให้ประเมินคุณภาพปลากัด: "${newSubmission.fish_name}"`;
-            const linkTo = `/expert/evaluations`;
-            await NotificationService.createNotification(expertId, message, linkTo);
-            // ▲▲▲▲▲ [จบส่วนที่เพิ่ม] ▲▲▲▲▲
-
-            console.log(`Successfully created quality evaluation submission ${newSubmission.id} and assigned to expert ${expertId}`);
-        }
-
-        return newSubmission;
-    }
+    return this.#rpcCreate(payload);
+  }
 }
 
 module.exports = new SubmissionService();

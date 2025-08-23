@@ -1,3 +1,5 @@
+// D:\ProJectFinal\Lasts\betta-fish-api\src\routes\users.js
+
 const express = require('express');
 const router = express.Router();
 
@@ -7,46 +9,73 @@ const authMiddleware = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
 
 // =================================================================
-//  Routes สำหรับจัดการข้อมูลส่วนตัว (ต้อง Login)
+//  Profile (ต้องล็อกอิน)
 // =================================================================
 
-// PUT /api/users/profile
-// อัปเดตข้อมูลโปรไฟล์ (ชื่อ, นามสกุล, username)
-router.put(
-    '/profile',
-    authMiddleware, // ตรวจสอบ Token
-    userController.updateProfile
+// GET /api/users/me  → ดึงโปรไฟล์ของฉัน
+router.get(
+  '/me',
+  authMiddleware,
+  userController.getMyProfile
 );
 
-// POST /api/users/profile/picture
-// อัปโหลดรูปโปรไฟล์ใหม่
+// PUT /api/users/profile  → อัปเดตโปรไฟล์ของฉัน
+router.put(
+  '/profile',
+  authMiddleware,
+  userController.updateProfile
+);
+
+// POST /api/users/profile/picture  → อัปโหลดรูปโปรไฟล์ (field: profilePicture)
 router.post(
   '/profile/picture',
-  authMiddleware, // ตรวจสอบ Token
-  uploadMiddleware, // จัดการไฟล์ที่ส่งมากับ field 'profilePicture'
+  authMiddleware,
+  uploadMiddleware,
   userController.uploadProfilePicture
 );
 
-
 // =================================================================
-//  Routes สำหรับดึงประวัติการใช้งาน (ต้อง Login)
+//  History (ต้องล็อกอิน)
+//  หมายเหตุ: ให้ทั้งรูปแบบใหม่ (/me/*) และแบบเดิม (/history/*) เพื่อไม่ให้ FE เดิมพัง
 // =================================================================
 
-// GET /api/users/history/evaluations
-// ดึงประวัติการส่งประเมินคุณภาพทั้งหมด
+// NEW: GET /api/users/me/evaluations  → ประวัติการส่งประเมินคุณภาพของฉัน
 router.get(
-  '/history/evaluations',
-  authMiddleware, // ตรวจสอบ Token
+  '/me/evaluations',
+  authMiddleware,
   userController.getEvaluationHistory
 );
 
-// GET /api/users/history/competitions
-// [เพิ่มใหม่] ดึงประวัติการแข่งขันทั้งหมด
+// NEW: GET /api/users/me/competitions  → ประวัติการเข้าร่วมประกวดของฉัน
 router.get(
-  '/history/competitions',
-  authMiddleware, // ตรวจสอบ Token
+  '/me/competitions',
+  authMiddleware,
   userController.getCompetitionHistory
 );
 
+// BACK-COMPAT: GET /api/users/history/evaluations
+router.get(
+  '/history/evaluations',
+  authMiddleware,
+  userController.getEvaluationHistory
+);
+
+// BACK-COMPAT: GET /api/users/history/competitions
+router.get(
+  '/history/competitions',
+  authMiddleware,
+  userController.getCompetitionHistory
+);
+
+// =================================================================
+//  Admin (ตัวอย่าง) — ดึงรายชื่อผู้ใช้ทั้งหมด
+//  ปกติ mount เป็น /api/users  → จึงเท่ากับ GET /api/users/
+// =================================================================
+router.get(
+  '/',
+  authMiddleware,
+  checkRole(['admin']),
+  userController.getAllUsers
+);
 
 module.exports = router;

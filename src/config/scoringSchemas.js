@@ -1,3 +1,5 @@
+// D:\ProJectFinal\Lasts\betta-fish-api\src\config\scoringSchemas.js
+
 const scoringSchemas = {
     'ปลากัดพื้นบ้านภาคใต้': [
         { key: "head_body", label: "หัวและลำตัว", max: 10 },

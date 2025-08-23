@@ -1,3 +1,5 @@
+//D:\ProJectFinal\Lasts\betta-fish-api\src\routes\publicRoutes.js
+
 const router = require('express').Router();
 const publicController = require('../controllers/publicController');
 

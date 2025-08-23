@@ -1,112 +1,163 @@
-const ManagerService = require('../services/managerService');
-const { v4: uuidv4 } = require('uuid');
-const { supabase, supabaseAdmin } = require('../config/supabase'); 
+// ======================================================================
+// File: src/controllers/managerController.js
+// หน้าที่: จัดการ Logic การทำงานทั้งหมดที่เกี่ยวข้องกับผู้จัดการ (Manager)
+// ======================================================================
+
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const ManagerService = require('../services/managerService');
+const { supabase, supabaseAdmin } = require('../config/supabase');
+const checklistNotifier = require('../services/checklistNotifierService');
+
+/**
+ * Utility function สำหรับครอบ (wrap) async route handlers
+ * เพื่อจัดการ Error และส่งต่อไปยัง Global Error Handler โดยอัตโนมัติ
+ */
+const asyncWrapper = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+/**
+ * Helper function สำหรับอัปโหลดไฟล์โปสเตอร์ไปยัง Supabase Storage
+ */
+const uploadPoster = async (file) => {
+  if (!file) {
+    throw Object.assign(new Error('กรุณาอัปโหลดโปสเตอร์'), { status: 400 });
+  }
+  const filePath = `ContestPosters/${uuidv4()}${path.extname(file.originalname)}`;
+  const { error } = await supabaseAdmin.storage
+    .from('posters')
+    .upload(filePath, file.buffer, { contentType: file.mimetype });
+
+  if (error) {
+    throw new Error(`อัปโหลดไฟล์ล้มเหลว: ${error.message}`);
+  }
+  return supabase.storage.from('posters').getPublicUrl(filePath).data.publicUrl;
+};
 
 class ManagerController {
+  // ----- Dashboard & Profile -----
+  getDashboardStats = asyncWrapper(async (req, res) => {
+    const stats = await ManagerService.getDashboardStats(req.userId);
+    res.status(200).json({ success: true, data: stats });
+  });
 
-    async createContestOrNews(req, res) {
-        try {
-            if (!req.file) {
-                return res.status(400).json({ error: 'กรุณาอัปโหลดโปสเตอร์' });
-            }
-            
-            const file = req.file;
-            const fileExtension = path.extname(file.originalname);
-            const safeFileName = `${uuidv4()}${fileExtension}`;
-            const folderPath = 'ContestPosters';
-            const fullPath = `${folderPath}/${safeFileName}`;
+  getManagerProfileDashboard = asyncWrapper(async (req, res) => {
+    const data = await ManagerService.getManagerProfileDashboard(req.userId);
+    res.status(200).json({ success: true, data });
+  });
 
-            const { error: uploadError } = await supabaseAdmin.storage
-                .from('posters')
-                .upload(fullPath, file.buffer, { contentType: file.mimetype });
+  // ----- Contest & News Management -----
+  createContestOrNews = asyncWrapper(async (req, res) => {
+    const posterUrl = await uploadPoster(req.file);
+    
+    const payload = { ...req.body, poster_url: posterUrl };
+    if (payload.is_vote_open) payload.is_vote_open = String(payload.is_vote_open) === 'true';
+    if (payload.allowed_subcategories) payload.allowed_subcategories = JSON.parse(payload.allowed_subcategories);
+    
+    const judgeIds = req.body.judge_ids ? JSON.parse(req.body.judge_ids) : [];
+    const newContest = await ManagerService.createContestOrNews(req.userId, payload);
 
-            if (uploadError) {
-                throw new Error('เกิดข้อผิดพลาดในการอัปโหลดไฟล์: ' + uploadError.message);
-            }
-
-            const { data: urlData } = supabase.storage.from('posters').getPublicUrl(fullPath);
-
-            const bodyData = { ...req.body };
-            if (bodyData.allowed_subcategories) {
-                bodyData.allowed_subcategories = JSON.parse(bodyData.allowed_subcategories);
-            }
-            if (bodyData.is_vote_open) {
-                bodyData.is_vote_open = bodyData.is_vote_open === 'true';
-            }
-            
-            const judgeIds = bodyData.judge_ids ? JSON.parse(bodyData.judge_ids) : [];
-            
-            const { judge_ids, ...contestPayload } = bodyData;
-            const contestData = { ...contestPayload, poster_url: urlData.publicUrl };
-
-            const newContest = await ManagerService.createContestOrNews(req.userId, contestData);
-
-            if (newContest.category === 'การประกวด' && judgeIds.length > 0) {
-                console.log(`Assigning ${judgeIds.length} judges to new contest ID: ${newContest.id}`);
-                for (const judgeId of judgeIds) {
-                    await ManagerService.assignJudgeToContest(newContest.id, judgeId, req.userId);
-                }
-            }
-
-            res.status(201).json(newContest);
-
-        } catch (error) {
-            console.error("Error in createContestOrNews:", error);
-            res.status(500).json({ error: error.message });
-        }
+    // Fire-and-forget notifications
+    checklistNotifier.onContestCreated(newContest.id, req.userId).catch(e => console.warn(e.message));
+    if (newContest.category === 'การประกวด' && judgeIds.length > 0) {
+      judgeIds.forEach(judgeId => {
+        ManagerService.assignJudgeToContest(newContest.id, judgeId, req.userId)
+          .then(() => checklistNotifier.onJudgeAssigned(newContest.id, judgeId))
+          .catch(e => console.warn(`Failed to assign/notify judge ${judgeId}:`, e.message));
+      });
     }
 
-    async getAllMyContests(req, res) { try { const contests = await ManagerService.getMyContests(req.userId); res.status(200).json(contests); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async updateMyContest(req, res) { try { const contest = await ManagerService.updateMyContest(req.params.id, req.userId, req.body); res.status(200).json(contest); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async deleteMyContest(req, res) { try { await ManagerService.deleteMyContest(req.params.id, req.userId); res.status(204).send(); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async getExpertList(req, res) { try { const experts = await ManagerService.getExpertList(); res.status(200).json(experts); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async assignJudgeToContest(req, res) { try { const { judgeId } = req.body; const assignment = await ManagerService.assignJudgeToContest(req.params.id, judgeId, req.userId); res.status(201).json(assignment); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async removeJudgeFromContest(req, res) { try { const { contestId, judgeId } = req.params; await ManagerService.removeJudgeFromContest(contestId, judgeId, req.userId); res.status(200).json({ message: 'ปลดกรรมการสำเร็จ' }); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async getSubmissionsForContest(req, res) { try { const submissions = await ManagerService.getContestSubmissions(req.params.id, req.userId); res.status(200).json(submissions); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async updateSubmissionStatus(req, res) { try { const { status } = req.body; const submission = await ManagerService.updateSubmissionStatus(req.params.id, status, req.userId); res.status(200).json(submission); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async getDashboardStats(req, res) { try { const stats = await ManagerService.getDashboardStats(req.userId); res.status(200).json(stats); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async getContestHistory(req, res) { try { const history = await ManagerService.getContestHistory(req.userId); res.status(200).json(history); } catch (error) { res.status(500).json({ error: error.message }); } }
-    async getAllResults(req, res) { try { const results = await ManagerService.getAllResults(req.userId); res.status(200).json(results); } catch (error) { res.status(500).json({ error: error.message }); } }
+    res.status(201).json({ success: true, data: newContest });
+  });
 
-    async updateContestStatus(req, res) {
-        try {
-            const { id } = req.params;
-            const { status } = req.body;
-            if (!status) {
-                return res.status(400).json({ error: 'กรุณาระบุสถานะที่ต้องการอัปเดต' });
-            }
-            const updatedContest = await ManagerService.updateContestStatus(id, req.userId, status);
-            res.status(200).json(updatedContest);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
+  getAllMyContests = asyncWrapper(async (req, res) => {
+    const contests = await ManagerService.getMyContests(req.userId);
+    res.status(200).json({ success: true, data: contests });
+  });
+
+  updateMyContest = asyncWrapper(async (req, res) => {
+    const contest = await ManagerService.updateMyContest(req.params.id, req.userId, req.body);
+    res.status(200).json({ success: true, data: contest });
+  });
+
+  deleteMyContest = asyncWrapper(async (req, res) => {
+    await ManagerService.deleteMyContest(req.params.id, req.userId);
+    res.status(204).send();
+  });
+
+  // ----- Judges Management -----
+  getExpertList = asyncWrapper(async (req, res) => {
+    const experts = await ManagerService.getExpertList();
+    res.status(200).json({ success: true, data: experts });
+  });
+
+  assignJudgeToContest = asyncWrapper(async (req, res) => {
+    const { judgeId } = req.body;
+    await ManagerService.assignJudgeToContest(req.params.id, judgeId, req.userId);
+    checklistNotifier.onJudgeAssigned(req.params.id, judgeId).catch(e => console.warn(e.message));
+    res.status(201).json({ success: true, message: 'มอบหมายกรรมการสำเร็จ' });
+  });
+
+  removeJudgeFromContest = asyncWrapper(async (req, res) => {
+    const { contestId, judgeId } = req.params;
+    await ManagerService.removeJudgeFromContest(contestId, judgeId, req.userId);
+    res.status(200).json({ success: true, message: 'ปลดกรรมการสำเร็จ' });
+  });
+
+  // ----- Live Contest Room & Flow Control -----
+  getSubmissionsForContest = asyncWrapper(async (req, res) => {
+    const submissions = await ManagerService.getContestSubmissions(req.params.id, req.userId);
+    res.status(200).json({ success: true, data: submissions });
+  });
+
+  updateSubmissionStatus = asyncWrapper(async (req, res) => {
+    const { status, reason } = req.body;
+    const submission = await ManagerService.updateSubmissionStatus(req.params.id, status, req.userId);
+    
+    const notifier = status === 'approved' ? checklistNotifier.onManagerApprove :
+                     status === 'rejected' ? checklistNotifier.onManagerReject : null;
+    if (notifier) {
+      notifier(req.params.id, req.userId, reason || 'ไม่ระบุ').catch(e => console.warn(e.message));
     }
+    
+    res.status(200).json({ success: true, data: submission });
+  });
 
-    async finalizeContest(req, res) {
-        try {
-            const { id } = req.params;
-            const result = await ManagerService.finalizeContest(id, req.userId);
-            res.status(200).json({ message: 'การประกวดสิ้นสุดและประกาศผลสำเร็จ', data: result });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    }
+  approveContestSubmission = asyncWrapper(async (req, res) => {
+    await ManagerService.updateSubmissionStatus(req.params.submissionId, 'approved', req.userId);
+    checklistNotifier.onManagerApprove(req.params.submissionId, req.userId).catch(e => console.warn(e.message));
+    res.status(200).json({ success: true, message: 'อนุมัติรายการสำเร็จ' });
+  });
 
-    // ▼▼▼▼▼ ส่วนที่เพิ่มเข้ามาใหม่ ▼▼▼▼▼
+  rejectContestSubmission = asyncWrapper(async (req, res) => {
+    const { reason } = req.body;
+    await ManagerService.updateSubmissionStatus(req.params.submissionId, 'rejected', req.userId);
+    checklistNotifier.onManagerReject(req.params.submissionId, req.userId, reason || 'ไม่ระบุ').catch(e => console.warn(e.message));
+    res.status(200).json({ success: true, message: 'ปฏิเสธรายการสำเร็จ' });
+  });
 
-    /**
-     * [ใหม่] ดึงข้อมูลสำหรับหน้าโปรไฟล์ของผู้จัดการ
-     */
-    async getManagerProfileDashboard(req, res) {
-        try {
-            const data = await ManagerService.getManagerProfileDashboard(req.userId);
-            res.status(200).json({ success: true, data: data });
-        } catch (error) {
-            console.error("Error in getManagerProfileDashboard:", error);
-            res.status(500).json({ success: false, error: error.message });
-        }
-    }
+  updateContestStatus = asyncWrapper(async (req, res) => {
+    const updatedContest = await ManagerService.updateContestStatus(req.params.id, req.userId, req.body.status);
+    res.status(200).json({ success: true, data: updatedContest });
+  });
+
+  finalizeContest = asyncWrapper(async (req, res) => {
+    const result = await ManagerService.finalizeContest(req.params.id, req.userId);
+    checklistNotifier.onContestFinalized(req.params.id).catch(e => console.warn(e.message));
+    res.status(200).json({ success: true, message: 'การประกวดสิ้นสุดและประกาศผลสำเร็จ', data: result });
+  });
+
+  // ----- History & Results -----
+  getContestHistory = asyncWrapper(async (req, res) => {
+    const history = await ManagerService.getContestHistory(req.userId);
+    res.status(200).json({ success: true, data: history });
+  });
+
+  getAllResults = asyncWrapper(async (req, res) => {
+    const results = await ManagerService.getAllResults(req.userId);
+    res.status(200).json({ success: true, data: results });
+  });
 }
 
 module.exports = new ManagerController();
