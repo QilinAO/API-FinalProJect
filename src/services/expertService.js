@@ -31,11 +31,29 @@ class ExpertService {
   }
 
   /**
+   * แปลงชื่อประเภทปลาจากตัวย่อเป็นชื่อเต็ม
+   * @param {string} fishType - ประเภทปลา (อาจเป็นตัวย่อ)
+   * @returns {string} ชื่อเต็มของประเภทปลา
+   */
+  getFullFishTypeName(fishType) {
+    const typeMapping = {
+      'A': 'ปลากัดพื้นบ้านภาคใต้',
+      'B': 'ปลากัดพื้นบ้านภาคอีสาน', 
+      'C': 'ปลากัดพื้นบ้านมหาชัย',
+      'D': 'ปลากัดพื้นบ้านอีสานหางลาย',
+      'E': 'ปลากัดพื้นบ้านภาคตะวันออก',
+      'F': 'ปลากัดพื้นบ้านภาคกลางและเหนือ'
+    };
+    
+    return typeMapping[fishType] || fishType;
+  }
+
+  /**
    * ดึงคิวงานประเมินคุณภาพที่รอการตอบรับและที่ตอบรับแล้ว
    * @param {string} expertId - UUID ของผู้เชี่ยวชาญ
    */
   async getEvaluationQueue(expertId) {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('assignments')
       .select(`
         id, status, 
@@ -52,7 +70,7 @@ class ExpertService {
       status: item.status,
       submission_id: item.submission.id,
       fish_name: item.submission.fish_name,
-      fish_type: item.submission.fish_type,
+      fish_type: this.getFullFishTypeName(item.submission.fish_type),
       owner_name: `${item.submission.owner.first_name || ''} ${item.submission.owner.last_name || ''}`.trim(),
       fish_image_urls: item.submission.fish_image_urls,
       fish_video_url: item.submission.fish_video_url
@@ -72,7 +90,7 @@ class ExpertService {
    * @param {string} [reason] - เหตุผล (ถ้ามี)
    */
   async respondToEvaluation(assignmentId, expertId, status, reason = null) {
-    const { data: check, error: checkError } = await supabase.from('assignments').select('id').match({ id: assignmentId, evaluator_id: expertId, status: 'pending' }).single();
+    const { data: check, error: checkError } = await supabaseAdmin.from('assignments').select('id').match({ id: assignmentId, evaluator_id: expertId, status: 'pending' }).single();
     if (checkError || !check) throw new Error('ไม่พบ Assignment หรือคุณไม่มีสิทธิ์ในการดำเนินการ');
     
     const { data, error } = await supabaseAdmin.from('assignments').update({ status, reject_reason: reason }).eq('id', assignmentId).select().single();
@@ -87,7 +105,7 @@ class ExpertService {
    * @param {object} scoresData - ข้อมูลคะแนน { scores, totalScore }
    */
   async submitQualityScores(assignmentId, expertId, scoresData) {
-    const { data: check, error: checkError } = await supabase.from('assignments').select('id, submission_id, submission:submissions(owner_id, fish_name)').match({ id: assignmentId, evaluator_id: expertId, status: 'accepted' }).single();
+    const { data: check, error: checkError } = await supabaseAdmin.from('assignments').select('id, submission_id, submission:submissions(owner_id, fish_name)').match({ id: assignmentId, evaluator_id: expertId, status: 'accepted' }).single();
     if (checkError || !check) throw new Error('ไม่สามารถให้คะแนนได้ งานนี้อาจยังไม่ถูกตอบรับหรือไม่มีสิทธิ์');
     
     const updatePayload = { 
@@ -211,7 +229,12 @@ class ExpertService {
    * @param {string} bettaType - ชื่อประเภทปลา
    */
   async getScoringSchema(bettaType) {
-    const schema = scoringSchemas[bettaType] || scoringSchemas['default'];
+    const scoringSchemas = require('../config/scoringSchemas');
+    
+    // แปลงตัวย่อเป็นชื่อเต็ม
+    const fullTypeName = this.getFullFishTypeName(bettaType);
+    
+    const schema = scoringSchemas[fullTypeName] || scoringSchemas['default'];
     if (!schema) {
       throw new Error('ไม่พบเกณฑ์การให้คะแนนสำหรับประเภทปลานี้');
     }
@@ -479,10 +502,10 @@ class ExpertService {
    */
   async getEvaluationHistory(expertId) {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('assignments')
         .select(`
-          id, status, assigned_at, evaluated_at, total_score,
+          id, status, assigned_at, evaluated_at, total_score, scores,
           submission:submissions(id, fish_name, fish_type, submitted_at, owner:profiles(first_name, last_name))
         `)
         .eq('evaluator_id', expertId)
@@ -490,7 +513,22 @@ class ExpertService {
         .order('evaluated_at', { ascending: false });
 
       if (error) throw new Error(error.message);
-      return data || [];
+      
+      // แปลงข้อมูลให้แสดงผลชัดเจนขึ้น
+      const formattedData = data.map(item => ({
+        id: item.id,
+        status: item.status,
+        assigned_at: item.assigned_at,
+        evaluated_at: item.evaluated_at,
+        total_score: item.total_score,
+        scores: item.scores,
+        fish_name: item.submission.fish_name,
+        fish_type: this.getFullFishTypeName(item.submission.fish_type),
+        owner_name: `${item.submission.owner.first_name || ''} ${item.submission.owner.last_name || ''}`.trim(),
+        submitted_at: item.submission.submitted_at
+      }));
+      
+      return formattedData || [];
     } catch (error) {
       throw new Error(`ไม่สามารถดึงประวัติการประเมินได้: ${error.message}`);
     }

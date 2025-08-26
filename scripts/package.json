@@ -1,0 +1,29 @@
+{
+  "name": "betta-fish-user-creation-scripts",
+  "version": "1.0.0",
+  "description": "สคริปต์สำหรับสร้างผู้ใช้จำนวนมากในระบบ Betta Fish Competition",
+  "main": "createUsers.js",
+  "scripts": {
+    "create-users": "node createUsers.js",
+    "create-random-users": "node createRandomUsers.js",
+    "create-users-simple": "node createUsersSimple.js",
+    "install-deps": "npm install"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.0",
+    "axios": "^1.6.0",
+    "form-data": "^4.0.4"
+  },
+  "keywords": [
+    "betta-fish",
+    "user-creation",
+    "supabase",
+    "admin",
+    "automation"
+  ],
+  "author": "Betta Fish Competition Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

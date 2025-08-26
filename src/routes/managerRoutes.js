@@ -12,6 +12,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.use(authMiddleware, checkRole(['manager', 'admin']));
 
 // Dashboard & Profile
+router.get('/dashboard', managerController.getDashboardStats); // เพิ่ม alias สำหรับ dashboard
 router.get('/dashboard/stats', managerController.getDashboardStats);
 router.get('/profile-dashboard', managerController.getManagerProfileDashboard);
 

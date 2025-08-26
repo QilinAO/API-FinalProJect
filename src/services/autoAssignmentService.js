@@ -250,11 +250,11 @@ class AutoAssignmentService {
     try {
       console.log('[AutoAssignment] Processing unassigned submissions...');
 
-      // หา submissions ที่ approved แล้วแต่ยังไม่มี assignment
+      // หา submissions ที่ pending หรือ approved แล้วแต่ยังไม่มี assignment
       const { data: unassignedSubmissions, error } = await supabaseAdmin
         .from('submissions')
-        .select('id, fish_type, fish_name')
-        .eq('status', 'approved')
+        .select('id, fish_type, fish_name, status')
+        .in('status', ['pending', 'approved'])
         .is('contest_id', null); // เฉพาะการประเมินคุณภาพ ไม่ใช่การประกวด
 
       if (error) {

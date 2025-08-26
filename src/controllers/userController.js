@@ -87,12 +87,36 @@ class UserController {
     const users = await userService.getAllUsers();
     res.json({ success: true, data: users });
   });
+
+  /**
+   * ดึงข้อมูล Dashboard ของผู้ใช้
+   * Route: GET /api/users/dashboard
+   */
+  getUserDashboard = asyncWrapper(async (req, res) => {
+    const dashboardData = await userService.getUserDashboard(req.userId);
+    res.json({ success: true, data: dashboardData });
+  });
+
+  /**
+   * ดึงข้อมูล Contests สำหรับผู้ใช้
+   * Route: GET /api/users/contests
+   */
+  getUserContests = asyncWrapper(async (req, res) => {
+    const contests = await userService.getUserContests(req.userId);
+    res.json({ success: true, data: contests });
+  });
+
+  /**
+   * ดึงประวัติการประเมินของฉัน
+   * Route: GET /api/users/me/evaluations
+   */
+  getMyEvaluationHistory = asyncWrapper(async (req, res) => {
+    const history = await userService.getMyEvaluationHistory(req.userId);
+    res.json({ success: true, data: history });
+  });
 }
 
 // --- Export ---
 const userController = new UserController();
 
-module.exports = {
-  userController,
-  uploadMiddleware: upload.single('profilePicture'),
-};
+module.exports = userController;

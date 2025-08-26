@@ -1,0 +1,28 @@
+# ไฟล์การตั้งค่าที่มีข้อมูลจริง
+config.js
+
+# ไฟล์ log
+*.log
+
+# ไฟล์ข้อมูลผู้ใช้ที่สร้างสำเร็จ
+users-created.json
+users-created.txt
+
+# ไฟล์ cache
+.cache/
+node_modules/
+
+# ไฟล์ environment
+.env
+.env.local
+.env.production
+
+# ไฟล์ IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ไฟล์ OS
+.DS_Store
+Thumbs.db 

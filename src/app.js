@@ -20,22 +20,28 @@ app.use(
 );
 
 const parseOrigins = (s) =>
-  (s || 'http://localhost:5173')
+  (s || 'http://localhost:5173,http://localhost:5174,http://localhost:5175')
     .split(',')
     .map((x) => x.trim())
     .filter(Boolean);
 
-const ALLOWED_ORIGINS = parseOrigins(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '');
+// 确保包含端口5175
+const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175';
+const ALLOWED_ORIGINS = parseOrigins(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || DEFAULT_ORIGINS);
+
+// 调试信息
+console.log('CORS Configuration:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('FRONTEND_URLS:', process.env.FRONTEND_URLS);
+console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+console.log('ALLOWED_ORIGINS:', ALLOWED_ORIGINS);
 
 const corsOptions = {
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    return cb(new Error(`Origin ${origin} not allowed by CORS`));
-  },
+  origin: true, // 开发环境下允许所有origin
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-user-id'],
+  optionsSuccessStatus: 200 // 某些浏览器需要这个
 };
 
 app.use(cors(corsOptions));
@@ -54,6 +60,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.get('/health', (_req, res) => res.json({ success: true, status: 'OK' }));
+app.get('/api/health', (_req, res) => res.json({ success: true, status: 'OK', service: 'betta-fish-api' }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -71,13 +78,14 @@ const limiter = rateLimit({
 app.use('/api', limiter);
 
 const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/users');
+const userRoutes = require('./routes/userRoutes');
 const managerRoutes = require('./routes/managerRoutes');
 const expertRoutes = require('./routes/expertRoutes');
 const submissionRoutes = require('./routes/submissionRoutes');
 const publicRoutes = require('./routes/publicRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const modelRoutes = require('./routes/modelRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -86,6 +94,7 @@ app.use('/api/experts', expertRoutes);
 app.use('/api/submissions', submissionRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/model', modelRoutes);
 app.use('/api', notificationRoutes);
 
 app.use((req, res) => {

@@ -101,14 +101,20 @@ class UserService {
 
     if (submission.status === 'rejected') {
       displayStatus = 'ถูกปฏิเสธ';
-    } else if (submission.status === 'approved') {
+    } else if (submission.status === 'evaluated') {
+      displayStatus = 'ประเมินเสร็จสิ้น';
+    } else if (submission.status === 'pending') {
       if (firstAssign?.status === 'evaluated') {
         displayStatus = 'ประเมินเสร็จสิ้น';
-      } else if (firstAssign) {
-        displayStatus = 'รอผู้เชี่ยวชาญประเมิน';
+      } else if (firstAssign?.status === 'accepted') {
+        displayStatus = 'กำลังประเมิน';
+      } else if (firstAssign?.status === 'pending') {
+        displayStatus = 'รอผู้เชี่ยวชาญตอบรับ';
       } else {
         displayStatus = 'รอการมอบหมาย';
       }
+    } else {
+      displayStatus = 'รอการตรวจสอบ';
     }
 
     const assignees = (submission.assignments || []).map(a => ({
@@ -172,6 +178,86 @@ class UserService {
       throw new Error(`ไม่สามารถดึงประวัติการแข่งขันได้: ${error.message}`);
     }
     return data || [];
+  }
+
+  /**
+   * ดึงข้อมูล Dashboard ของผู้ใช้
+   * @param {string} userId - UUID ของผู้ใช้
+   * @returns {Promise<object>}
+   */
+  async getUserDashboard(userId) {
+    try {
+      // ดึงข้อมูลสรุปต่างๆ
+      const [evaluationCount, competitionCount, recentSubmissions] = await Promise.all([
+        // จำนวนการประเมิน
+        supabaseAdmin
+          .from('submissions')
+          .select('id', { count: 'exact' })
+          .eq('owner_id', userId)
+          .is('contest_id', null),
+        
+        // จำนวนการแข่งขัน
+        supabaseAdmin
+          .from('submissions')
+          .select('id', { count: 'exact' })
+          .eq('owner_id', userId)
+          .not('contest_id', 'is', null),
+        
+        // การส่งล่าสุด
+        supabaseAdmin
+          .from('submissions')
+          .select('id, fish_name, status, submitted_at')
+          .eq('owner_id', userId)
+          .order('submitted_at', { ascending: false })
+          .limit(5)
+      ]);
+
+      return {
+        stats: {
+          totalEvaluations: evaluationCount.count || 0,
+          totalCompetitions: competitionCount.count || 0,
+        },
+        recentSubmissions: recentSubmissions.data || []
+      };
+    } catch (error) {
+      throw new Error(`ไม่สามารถดึงข้อมูล Dashboard ได้: ${error.message}`);
+    }
+  }
+
+  /**
+   * ดึงข้อมูล Contests สำหรับผู้ใช้
+   * @param {string} userId - UUID ของผู้ใช้
+   * @returns {Promise<Array>}
+   */
+  async getUserContests(userId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('submissions')
+        .select(`
+          id, fish_name, status, final_score, submitted_at,
+          contest:contests(id, name, category, status, start_date, end_date)
+        `)
+        .eq('owner_id', userId)
+        .not('contest_id', 'is', null)
+        .order('submitted_at', { ascending: false });
+
+      if (error) {
+        throw new Error(`ไม่สามารถดึงข้อมูล Contests ได้: ${error.message}`);
+      }
+
+      return data || [];
+    } catch (error) {
+      throw new Error(`ไม่สามารถดึงข้อมูล Contests ได้: ${error.message}`);
+    }
+  }
+
+  /**
+   * ดึงประวัติการประเมินของฉัน
+   * @param {string} userId - UUID ของผู้ใช้
+   * @returns {Promise<Array>}
+   */
+  async getMyEvaluationHistory(userId) {
+    return this.getEvaluationHistory(userId);
   }
 }
 

@@ -32,10 +32,13 @@ router.get('/assignments/:assignmentId', expertController.getAssignmentDetails);
 // ============= Evaluation Routes =============
 router.post('/assignments/:assignmentId/evaluate', expertController.submitEvaluation);
 router.put('/assignments/:assignmentId/scores', expertController.updateScores);
+router.post('/assignments/:assignmentId/score', expertController.submitQualityScores);
 router.post('/assignments/:assignmentId/reject', expertController.rejectAssignment);
+router.post('/assignments/:assignmentId/respond', expertController.respondToEvaluation);
 
 // ============= Contest Judging Routes =============
 router.get('/contests/judging', expertController.getJudgingContests);
+router.get('/judging', expertController.getJudgingContests); // Alias for frontend compatibility
 router.post('/contests/:contestId/accept', expertController.acceptJudging);
 router.post('/contests/:contestId/decline', expertController.declineJudging);
 
@@ -183,6 +186,10 @@ router.get('/specialities/suggestions', (req, res) => {
 // ============= History Routes =============
 router.get('/history/evaluations', expertController.getEvaluationHistory);
 router.get('/history/contests', expertController.getJudgingHistory);
+router.get('/history', expertController.getJudgingHistory); // Alias for frontend compatibility
+
+// ============= Scoring Schema Routes =============
+router.get('/scoring-schema/:bettaType', expertController.getScoringSchema);
 
 // ============= Statistics Routes =============
 router.get('/stats/performance', expertController.getPerformanceStats);

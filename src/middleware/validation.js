@@ -63,7 +63,40 @@ const validateSignIn = (req, res, next) => {
   next();
 };
 
+// Validation สำหรับการวิเคราะห์รูปภาพด้วย Model API
+const validateImageAnalysis = (req, res, next) => {
+  const schema = Joi.object({
+    betta_type: Joi.string().optional().messages({
+      'string.base': 'ประเภทปลากัดต้องเป็นข้อความ'
+    }),
+    betta_age_months: Joi.number().integer().min(0).max(120).optional().messages({
+      'number.base': 'อายุปลากัดต้องเป็นตัวเลข',
+      'number.integer': 'อายุปลากัดต้องเป็นจำนวนเต็ม',
+      'number.min': 'อายุปลากัดต้องไม่ติดลบ',
+      'number.max': 'อายุปลากัดต้องไม่เกิน 120 เดือน'
+    }),
+    analysis_type: Joi.string().valid('quality', 'competition').optional().messages({
+      'any.only': 'ประเภทการวิเคราะห์ต้องเป็น quality หรือ competition'
+    })
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      error: 'ข้อมูลไม่ถูกต้อง',
+      details: error.details.map(detail => ({
+        field: detail.path.join('.'),
+        message: detail.message
+      }))
+    });
+  }
+
+  next();
+};
+
 module.exports = {
   validateSignUp,
-  validateSignIn
+  validateSignIn,
+  validateImageAnalysis
 };

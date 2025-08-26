@@ -13,6 +13,7 @@ const submissionService = require('../services/submissionService');
 const checklistNotifier = require('../services/checklistNotifierService');
 const devNotifier = require('../notifiers/devTelegramNotifier');
 const autoAssignmentService = require('../services/autoAssignmentService');
+const modelApiService = require('../services/modelApiService');
 
 // ------------------------------- Utils --------------------------------
 
@@ -190,6 +191,47 @@ const createEvaluationSubmission = asyncWrapperWithFileCleanup(async (req, res) 
 const createCompetitionSubmission = asyncWrapperWithFileCleanup(async (req, res) => {
   validateSubmissionRequest(req, { requireContestId: true });
 
+  // ดึงข้อมูลการประกวดเพื่อตรวจสอบ allowed_subcategories
+  const { data: contest, error: contestError } = await supabaseAdmin
+    .from('contests')
+    .select('allowed_subcategories')
+    .eq('id', req.body.contest_id)
+    .single();
+
+  if (contestError || !contest) {
+    throw new Error('ไม่พบข้อมูลการประกวดที่ระบุ');
+  }
+
+  // ตรวจสอบด้วย AI Model
+  let aiValidation = null;
+  if (req.files?.images && req.files.images.length > 0) {
+    try {
+      // ตรวจสอบว่า Model API พร้อมใช้งานหรือไม่
+      const isModelReady = await modelApiService.isModelReady();
+      
+      if (isModelReady) {
+        // ใช้รูปแรกในการตรวจสอบ
+        const firstImage = req.files.images[0];
+        const aiResult = await modelApiService.predictBettaType(firstImage.buffer);
+        
+        if (aiResult.success && aiResult.data.final_label) {
+          const aiPredictedType = aiResult.data.final_label.code;
+          const confidence = aiResult.data.top1.prob;
+          
+          aiValidation = modelApiService.validateBettaType(
+            req.body.betta_type,
+            contest.allowed_subcategories || [],
+            aiPredictedType,
+            confidence
+          );
+        }
+      }
+    } catch (error) {
+      console.warn('AI validation failed:', error.message);
+      // ไม่ throw error เพราะ AI validation เป็นเพียงการแจ้งเตือน
+    }
+  }
+
   const { imageUrls, videoUrl } = await uploadAndGetUrls(req.files, req.addUploadedFilePath);
 
   const rpcParams = {
@@ -211,11 +253,62 @@ const createCompetitionSubmission = asyncWrapperWithFileCleanup(async (req, res)
     .onContestSubmissionCreated(newSubmissionId)
     .catch((e) => console.warn(e.message));
 
-  res.status(201).json({
+  // ส่ง response พร้อม AI validation warning (ถ้ามี)
+  const response = {
     success: true,
     message: 'ส่งเข้าร่วมประกวดสำเร็จ!',
-    data: { submissionId: newSubmissionId },
-  });
+    data: { submissionId: newSubmissionId }
+  };
+
+  if (aiValidation && aiValidation.warning) {
+    response.aiValidation = {
+      warning: aiValidation.warning,
+      isValid: aiValidation.isValid,
+      confidence: aiValidation.confidence,
+      aiPredictedType: aiValidation.aiPredictedType,
+      userSelectedType: aiValidation.userSelectedType
+    };
+  }
+
+  res.status(201).json(response);
+});
+
+/**
+ * ดึงข้อมูล submissions ของผู้ใช้
+ * GET /api/submissions
+ */
+const getUserSubmissions = asyncWrapperWithFileCleanup(async (req, res) => {
+  const { userId } = req;
+  
+  try {
+    const { data: submissions, error } = await supabase
+      .from('submissions')
+      .select(`
+        id,
+        fish_name,
+        fish_type,
+        fish_age_months,
+        fish_image_urls,
+        fish_video_url,
+        status,
+        final_score,
+        submitted_at,
+        contest:contests(id, name, category, status)
+      `)
+      .eq('owner_id', userId)
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`ไม่สามารถดึงข้อมูล submissions ได้: ${error.message}`);
+    }
+
+    res.json({
+      success: true,
+      data: submissions || []
+    });
+  } catch (error) {
+    throw new Error(`เกิดข้อผิดพลาดในการดึงข้อมูล submissions: ${error.message}`);
+  }
 });
 
 // ------------------------------- Exports ------------------------------
@@ -224,4 +317,5 @@ module.exports = {
   uploadSubmissionFiles,
   createEvaluationSubmission,
   createCompetitionSubmission,
+  getUserSubmissions,
 };

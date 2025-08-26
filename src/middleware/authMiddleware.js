@@ -115,3 +115,6 @@ async function authMiddleware(req, res, next) {
 }
 
 module.exports = authMiddleware;
+
+// เพิ่ม export สำหรับ requireAuth
+module.exports.requireAuth = authMiddleware;

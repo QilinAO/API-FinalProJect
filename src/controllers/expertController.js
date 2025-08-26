@@ -113,6 +113,27 @@ class ExpertController {
   });
 
   /**
+   * ตอบรับหรือปฏิเสธงานประเมินคุณภาพ
+   * Route: POST /api/experts/assignments/:assignmentId/respond
+   */
+  respondToEvaluation = asyncWrapper(async (req, res) => {
+    const { assignmentId } = req.params;
+    const { status, reason } = req.body;
+    const result = await ExpertService.respondToEvaluation(assignmentId, req.userId, status, reason);
+    res.json({ success: true, data: result });
+  });
+
+  /**
+   * ส่งคะแนนการประเมินคุณภาพ
+   * Route: POST /api/experts/assignments/:assignmentId/score
+   */
+  submitQualityScores = asyncWrapper(async (req, res) => {
+    const { assignmentId } = req.params;
+    const result = await ExpertService.submitQualityScores(assignmentId, req.userId, req.body);
+    res.json({ success: true, data: result });
+  });
+
+  /**
    * ดึงคิวงานประเมินคุณภาพ
    * Route: GET /api/experts/queue
    */
@@ -191,6 +212,16 @@ class ExpertController {
   getJudgingHistory = asyncWrapper(async (req, res) => {
     const history = await ExpertService.getJudgingHistory(req.userId);
     res.json({ success: true, data: history });
+  });
+
+  /**
+   * ดึงเกณฑ์การให้คะแนนตามประเภทปลา
+   * Route: GET /api/experts/scoring-schema/:bettaType
+   */
+  getScoringSchema = asyncWrapper(async (req, res) => {
+    const { bettaType } = req.params;
+    const schema = await ExpertService.getScoringSchema(bettaType);
+    res.json({ success: true, data: schema });
   });
 
   /**
