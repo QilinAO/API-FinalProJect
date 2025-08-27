@@ -1,38 +1,121 @@
 // ======================================================================
 // File: src/services/modelApiService.js
-// หน้าที่: จัดการการเรียกใช้ AI Model API สำหรับตรวจสอบประเภทปลากัด
+// หน้าที่: จัดการการเรียกใช้ HuggingFace Model API สำหรับตรวจสอบประเภทปลากัด
 // ======================================================================
 
 const axios = require('axios');
-const FormData = require('form-data');
+const { Client } = require('@gradio/client');
 
 class ModelApiService {
   constructor() {
-    this.timeout = 30000; // 30 วินาที
-    const envUrl = (process.env.MODEL_API_URL || '').trim();
-    // ลำดับ host ที่จะลองเชื่อมต่ออัตโนมัติ (รองรับรันนอก Docker และใน Docker)
-    this.candidates = [
-      envUrl,
-      'http://localhost:8000',
-      'http://127.0.0.1:8000',
-      'http://host.docker.internal:8000',
-      'http://web-infer:8000',
-    ].filter(Boolean);
-    this.baseURL = null; // ค่าใช้งานจริง จะกำหนดหลังตรวจสอบ
+    this.timeout = 60000; // 60 วินาที (Gradio ใช้เวลานาน)
+    this.huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN;
+    this.spaceId = process.env.HUGGINGFACE_SPACE_ID || 'QilinAO/betta-ts-space'; // Space ID ไม่ใช่ model name
+    this.spaceUrl = process.env.HUGGINGFACE_SPACE_URL || 'https://qilinao-betta-ts-space.hf.space';
+    this.useGradioAPI = process.env.USE_GRADIO_API === 'true' || true; // ค่าเริ่มต้นใช้ Gradio
+    
+    // URLs สำหรับ API ต่างๆ
+    this.inferenceURL = 'https://api-inference.huggingface.co/models';
+    this.gradioURL = `${this.spaceUrl}/gradio_api/call`;
+    
+    // Cache สำหรับ Space spec
+    this.spaceSpec = null;
+    this.gradioClient = null;
+    
+    if (!this.huggingFaceToken) {
+      console.warn('HUGGINGFACE_API_TOKEN not found in environment variables');
+    }
+    
+    console.log(`Using ${this.useGradioAPI ? 'Gradio Space' : 'Inference'} API for Space: ${this.spaceId}`);
   }
 
-  async ensureBaseURL() {
-    if (this.baseURL) return this.baseURL;
-    for (const url of this.candidates) {
-      try {
-        const res = await axios.get(url + '/', { timeout: 2000 });
-        if (res?.data && (res.data.status === 'ok' || res.status === 200)) {
-          this.baseURL = url;
-          return this.baseURL;
-        }
-      } catch (_) { /* ลองตัวถัดไป */ }
+  /**
+   * สร้าง headers สำหรับ HuggingFace API
+   */
+  getHeaders() {
+    return {
+      'Authorization': `Bearer ${this.huggingFaceToken}`,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  /**
+   * ดึงสเปกของ Space และหา predict endpoint
+   */
+  async getSpaceSpec() {
+    if (this.spaceSpec) {
+      return this.spaceSpec; // ใช้ cache
     }
-    throw new Error('ไม่สามารถเชื่อมต่อ Model API ได้จาก hosts ที่กำหนด');
+
+    try {
+      console.log('🔍 กำลังดึงสเปกของ Space...');
+      
+      // สร้าง Gradio client
+      this.gradioClient = await Client.connect(this.spaceUrl);
+      
+      // ดึง API info
+      const apiInfo = this.gradioClient.config;
+      
+      console.log('✅ ดึงสเปก Space สำเร็จ');
+      console.log('📊 Space Dependencies:', apiInfo.dependencies?.length || 0);
+      
+      // หา predict endpoint
+      let predictEndpoint = null;
+      if (apiInfo.dependencies) {
+        for (const dep of apiInfo.dependencies) {
+          if (dep.api_name === 'predict' || dep.api_name === '/predict') {
+            predictEndpoint = dep;
+            break;
+          }
+          // ถ้าไม่มี api_name แต่มี targets ที่เป็น submit button
+          if (!predictEndpoint && dep.targets && dep.targets.some(t => t[1] === 'click')) {
+            predictEndpoint = dep;
+          }
+        }
+      }
+      
+      if (predictEndpoint) {
+        console.log(`✅ พบ predict endpoint: ${predictEndpoint.api_name || 'unnamed'}`);
+        console.log(`📊 Input components: ${predictEndpoint.inputs?.length || 0}`);
+        console.log(`📊 Output components: ${predictEndpoint.outputs?.length || 0}`);
+      } else {
+        console.warn('⚠️ ไม่พบ predict endpoint ในสเปก');
+      }
+      
+      this.spaceSpec = {
+        config: apiInfo,
+        predictEndpoint: predictEndpoint
+      };
+      
+      return this.spaceSpec;
+      
+    } catch (error) {
+      console.error('❌ ไม่สามารถดึงสเปก Space ได้:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * ตรวจสอบว่า Space พร้อมใช้งานหรือไม่
+   */
+  async checkModelStatus() {
+    try {
+      if (this.useGradioAPI) {
+        // ตรวจสอบ Space
+        const response = await axios.get(this.spaceUrl, { timeout: 10000 });
+        return response.status === 200;
+      } else {
+        // ตรวจสอบ Inference API
+        const response = await axios.get(`${this.inferenceURL}/${this.spaceId}`, {
+          headers: this.getHeaders(),
+          timeout: 5000
+        });
+        return response.status === 200;
+      }
+    } catch (error) {
+      console.error('Model/Space status check failed:', error.message);
+      return false;
+    }
   }
 
   /**
@@ -42,33 +125,381 @@ class ModelApiService {
    * @returns {Promise<Object>} ผลการตรวจสอบ
    */
   async predictBettaType(imageBuffer, threshold = 0.90) {
-    try {
-      const base = await this.ensureBaseURL();
-      const formData = new FormData();
-      formData.append('file', imageBuffer, { filename: 'betta.jpg', contentType: 'image/jpeg' });
+    if (this.useGradioAPI) {
+      return await this.predictWithGradio(imageBuffer, threshold);
+    } else {
+      return await this.predictWithInference(imageBuffer, threshold);
+    }
+  }
 
-      const response = await axios.post(`${base}/predict`, formData, {
-        params: {
-          threshold: threshold,
-          topk: 3
-        },
+  /**
+   * ใช้ Gradio Space API ด้วย @gradio/client
+   */
+  async predictWithGradio(imageBuffer, threshold = 0.90) {
+    try {
+      // ดึงสเปกของ Space ก่อน
+      const spec = await this.getSpaceSpec();
+      
+      if (!this.gradioClient) {
+        throw new Error('Gradio client not initialized');
+      }
+      
+      if (!spec.predictEndpoint) {
+        throw new Error('No predict endpoint found in Space spec');
+      }
+      
+      console.log('📡 กำลังส่งรูปภาพไปยัง Gradio Space...');
+      
+      // สร้าง Blob จาก imageBuffer (สำหรับ @gradio/client)
+      const imageBlob = new Blob([imageBuffer], { type: 'image/jpeg' });
+      
+      // เรียกใช้ predict ตาม api_name ที่พบในสเปก
+      const apiName = spec.predictEndpoint.api_name || 'predict';
+      
+      console.log(`🎯 เรียกใช้ API: ${apiName}`);
+      
+      const result = await this.gradioClient.predict(apiName, [imageBlob]);
+      
+      console.log('✅ ได้รับผลลัพธ์จาก Gradio Space');
+      
+      // แปลงผลลัพธ์
+      return this.formatGradioClientResult(result.data);
+      
+    } catch (error) {
+      console.error('Gradio Client Error:', error.message);
+      
+      // Fallback: ลองใช้ axios แบบเดิม
+      console.log('🔄 ลอง fallback ด้วย axios...');
+      return await this.predictWithGradioAxios(imageBuffer, threshold);
+    }
+  }
+
+  /**
+   * Fallback: ใช้ axios เรียก Gradio API แบบเดิม
+   */
+  async predictWithGradioAxios(imageBuffer, threshold = 0.90) {
+    try {
+      // แปลง Buffer เป็ง base64
+      const base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+      
+      // สร้าง session hash
+      const sessionHash = Math.random().toString(36).substring(2);
+      
+      // Gradio API format
+      const requestData = {
+        data: [
+          {
+            path: null,
+            url: base64Image,
+            size: imageBuffer.length,
+            orig_name: "betta_image.jpg",
+            mime_type: "image/jpeg",
+            is_stream: false,
+            meta: { _type: "gradio.FileData" }
+          }
+        ],
+        event_data: null,
+        fn_index: 2, // predict function index
+        trigger_id: 12, // submit button ID
+        session_hash: sessionHash
+      };
+
+      const response = await axios.post(`${this.gradioURL}/predict`, requestData, {
         headers: {
-          ...formData.getHeaders(),
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
         },
         timeout: this.timeout
       });
 
-      return {
-        success: true,
-        data: response.data
-      };
+      // ประมวลผล event stream response
+      const result = await this.processGradioResponse(response.data);
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to get prediction from Gradio');
+      }
+
+      return result;
+      
     } catch (error) {
-      console.error('Model API Error:', error.message);
+      console.error('Gradio Axios Fallback Error:', error.message);
       return {
         success: false,
-        error: error.response?.data?.detail || error.message
+        error: error.response?.data?.error || error.message
       };
     }
+  }
+
+  /**
+   * ใช้ HuggingFace Inference API
+   */
+  async predictWithInference(imageBuffer, threshold = 0.90) {
+    try {
+      if (!this.huggingFaceToken) {
+        throw new Error('HuggingFace API token is required');
+      }
+
+      const response = await axios.post(
+        `${this.inferenceURL}/${this.modelName}`,
+        imageBuffer,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.huggingFaceToken}`,
+            'Content-Type': 'image/jpeg'
+          },
+          timeout: this.timeout
+        }
+      );
+
+      // แปลงผลลัพธ์จาก HuggingFace ให้เข้ากับรูปแบบเดิม
+      const predictions = response.data;
+      if (!Array.isArray(predictions) || predictions.length === 0) {
+        throw new Error('Invalid response from HuggingFace model');
+      }
+
+      return this.formatPredictionResult(predictions);
+      
+    } catch (error) {
+      console.error('HuggingFace Inference API Error:', error.message);
+      return {
+        success: false,
+        error: error.response?.data?.error || error.message
+      };
+    }
+  }
+
+  /**
+   * ประมวลผล Gradio response
+   */
+  async processGradioResponse(responseData) {
+    try {
+      if (typeof responseData === 'string') {
+        const lines = responseData.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.substring(6));
+              if (data.msg === 'process_completed' && data.output?.data) {
+                return this.formatGradioResult(data.output.data);
+              }
+            } catch (e) {
+              continue;
+            }
+          }
+        }
+      }
+      
+      throw new Error('No valid result found in Gradio response');
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * แปลงผลลัพธ์จาก @gradio/client ให้ตรงกับรูปแบบที่ Frontend คาดหวัง
+   */
+  formatGradioClientResult(clientData) {
+    try {
+      console.log('🔍 กำลังแปลงผลลัพธ์จาก Gradio Client:', JSON.stringify(clientData, null, 2));
+      
+      if (Array.isArray(clientData) && clientData.length >= 2) {
+        const prediction = clientData[0]; // ผลทำนาย
+        const probabilities = clientData[1]; // ความน่าจะเป็น
+        
+        if (probabilities && typeof probabilities === 'object') {
+          // หา top prediction
+          const topEntry = Object.entries(probabilities).reduce((a, b) => 
+            a[1] > b[1] ? a : b
+          );
+          
+          const bettaInfo = this.getBettaTypeInfo(topEntry[0]);
+          const confidence = topEntry[1];
+          const isConfident = confidence >= 0.8; // threshold สำหรับความมั่นใจ
+          
+          // รูปแบบที่ Frontend คาดหวัง
+          const formattedData = {
+            // สำหรับ BettaEvaluationForm
+            top1: {
+              prob: confidence
+            },
+            final_label: {
+              code: bettaInfo.code,
+              name: bettaInfo.name,
+              reason: `AI วิเคราะห์จากลักษณะภาพพบว่าเป็นปลากัดพันธุ์${bettaInfo.name} ด้วยความมั่นใจ ${(confidence * 100).toFixed(1)}%`
+            },
+            is_confident: isConfident,
+            topk: Object.entries(probabilities)
+              .sort((a, b) => b[1] - a[1])
+              .map(([label, score]) => {
+                const info = this.getBettaTypeInfo(label);
+                return {
+                  label,
+                  score,
+                  code: info.code,
+                  name: info.name
+                };
+              }),
+            
+            // สำหรับ SubmissionFormModal (backward compatibility)
+            predictions: Object.entries(probabilities).map(([label, score]) => ({
+              label,
+              score,
+              code: this.extractBettaTypeFromLabel(label)
+            }))
+          };
+
+          return {
+            success: true,
+            data: formattedData
+          };
+        }
+      }
+      
+      throw new Error('Invalid Gradio Client result format');
+    } catch (error) {
+      console.error('Error formatting Gradio Client result:', error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * แปลงผลลัพธ์จาก Gradio (axios fallback)
+   */
+  formatGradioResult(gradioData) {
+    try {
+      if (Array.isArray(gradioData) && gradioData.length >= 2) {
+        const prediction = gradioData[0]; // ผลทำนาย
+        const probabilities = gradioData[1]; // ความน่าจะเป็น
+        
+        if (probabilities && typeof probabilities === 'object') {
+          // หา top prediction
+          const topEntry = Object.entries(probabilities).reduce((a, b) => 
+            a[1] > b[1] ? a : b
+          );
+          
+          const formattedData = {
+            final_label: {
+              code: this.extractBettaTypeFromLabel(topEntry[0]),
+              confidence: topEntry[1],
+              label: topEntry[0]
+            },
+            top1: {
+              prob: topEntry[1],
+              label: topEntry[0]
+            },
+            predictions: Object.entries(probabilities).map(([label, score]) => ({
+              label,
+              score,
+              code: this.extractBettaTypeFromLabel(label)
+            }))
+          };
+
+          return {
+            success: true,
+            data: formattedData
+          };
+        }
+      }
+      
+      throw new Error('Invalid Gradio result format');
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * แปลงผลลัพธ์จาก Inference API
+   */
+  formatPredictionResult(predictions) {
+    const topPrediction = predictions.reduce((prev, current) => 
+      (prev.score > current.score) ? prev : current
+    );
+
+    const formattedData = {
+      final_label: {
+        code: this.extractBettaTypeFromLabel(topPrediction.label),
+        confidence: topPrediction.score,
+        label: topPrediction.label
+      },
+      top1: {
+        prob: topPrediction.score,
+        label: topPrediction.label
+      },
+      predictions: predictions.slice(0, 3).map(pred => ({
+        label: pred.label,
+        score: pred.score,
+        code: this.extractBettaTypeFromLabel(pred.label)
+      }))
+    };
+
+    return {
+      success: true,
+      data: formattedData
+    };
+  }
+
+  /**
+   * แยกประเภทปลากัด (A, B, C, D, E, F, G, H) จาก label ของ HuggingFace model
+   * @param {string} label - label จาก HuggingFace model QilinAO/betta-ts-space
+   * @returns {string} ประเภทปลากัด
+   */
+  /**
+   * แปลงจาก region label เป็น betta type พร้อมชื่อไทย
+   */
+  getBettaTypeInfo(label) {
+    if (!label) return { code: 'UNKNOWN', name: 'ไม่ทราบ' };
+    
+    // สำหรับโมเดลนี้ที่จำแนก isaan / mahachai / south
+    // ตาม bettaTypes.js: A=กลาง/เหนือ, B=อีสาน, C=ใต้, D=มหาชัย
+    const regionMapping = {
+      'isaan': { code: 'B', name: 'ปลากัดพื้นบ้านภาคอีสาน' },
+      'mahachai': { code: 'D', name: 'ปลากัดพื้นบ้านมหาชัย' }, 
+      'south': { code: 'C', name: 'ปลากัดพื้นภาคใต้' }
+    };
+    
+    const lowerLabel = label.toLowerCase();
+    for (const [region, info] of Object.entries(regionMapping)) {
+      if (lowerLabel.includes(region)) {
+        return info;
+      }
+    }
+    
+    // ถ้าไม่ใช่ region model ลองรูปแบบอื่น
+    const patterns = [
+      /\b([A-H])\b/i,           // "A", "B", "C" ที่เป็นคำแยก
+      /type[_\s]*([A-H])/i,     // "Type_A", "type A", "typeB"
+      /class[_\s]*([A-H])/i,    // "Class_A", "class A"
+      /label[_\s]*([A-H])/i,    // "Label_A", "label A"
+      /betta[_\s]*([A-H])/i,    // "Betta_A", "betta A"
+      /([A-H])$/i,              // ลงท้ายด้วย A-H
+      /^([A-H])/i,              // ขึ้นต้นด้วย A-H
+    ];
+    
+    for (const pattern of patterns) {
+      const match = label.match(pattern);
+      if (match) {
+        const code = match[1].toUpperCase();
+        return { code, name: `ประเภท ${code}` };
+      }
+    }
+    
+    // หากไม่พบรูปแบบใดๆ ลอง log เพื่อ debug
+    console.warn(`Unable to extract betta type from label: "${label}"`);
+    return { code: 'UNKNOWN', name: 'ไม่ทราบ' };
+  }
+
+  // Backward compatibility
+  extractBettaTypeFromLabel(label) {
+    return this.getBettaTypeInfo(label).code;
   }
 
   /**
@@ -79,36 +510,78 @@ class ModelApiService {
    */
   async predictBettaTypeBatch(imageBuffers, threshold = 0.90) {
     try {
-      const base = await this.ensureBaseURL();
-      const formData = new FormData();
+      if (!this.huggingFaceToken) {
+        throw new Error('HuggingFace API token is required');
+      }
+
+      // HuggingFace Inference API ไม่รองรับ batch processing โดยตรง
+      // ดังนั้นเราจะประมวลผลแต่ละรูปแล้วรวมผลลัพธ์
+      const batchResults = await Promise.all(
+        imageBuffers.map(async (buffer, index) => {
+          try {
+            const result = await this.predictBettaType(buffer, threshold);
+            return {
+              index,
+              success: result.success,
+              data: result.data,
+              error: result.error
+            };
+          } catch (error) {
+            return {
+              index,
+              success: false,
+              error: error.message
+            };
+          }
+        })
+      );
+
+      // รวมผลลัพธ์และคำนวณค่าเฉลี่ย
+      const successfulResults = batchResults.filter(r => r.success);
       
-      imageBuffers.forEach((buffer, index) => {
-        formData.append('files', buffer, { 
-          filename: `betta_${index}.jpg`, 
-          contentType: 'image/jpeg' 
-        });
+      if (successfulResults.length === 0) {
+        return {
+          success: false,
+          error: 'ไม่สามารถประมวลผลรูปภาพใดๆ ได้'
+        };
+      }
+
+      // หาประเภทที่พบบ่อยที่สุด
+      const typeVotes = {};
+      successfulResults.forEach(result => {
+        const type = result.data.final_label.code;
+        typeVotes[type] = (typeVotes[type] || 0) + result.data.final_label.confidence;
       });
 
-      const response = await axios.post(`${base}/predict/batch`, formData, {
-        params: {
-          threshold: threshold,
-          topk: 3
+      const mostVotedType = Object.keys(typeVotes).reduce((a, b) => 
+        typeVotes[a] > typeVotes[b] ? a : b
+      );
+
+      // สร้างผลลัพธ์รวม
+      const averageConfidence = successfulResults.reduce((sum, result) => 
+        sum + result.data.final_label.confidence, 0
+      ) / successfulResults.length;
+
+      const batchData = {
+        batch_results: batchResults,
+        consensus: {
+          predicted_type: mostVotedType,
+          confidence: averageConfidence,
+          votes: typeVotes
         },
-        headers: {
-          ...formData.getHeaders(),
-        },
-        timeout: this.timeout
-      });
+        processed_images: imageBuffers.length,
+        successful_images: successfulResults.length
+      };
 
       return {
         success: true,
-        data: response.data
+        data: batchData
       };
     } catch (error) {
-      console.error('Model API Batch Error:', error.message);
+      console.error('HuggingFace Model API Batch Error:', error.message);
       return {
         success: false,
-        error: error.response?.data?.detail || error.message
+        error: error.response?.data?.error || error.message
       };
     }
   }
@@ -119,42 +592,57 @@ class ModelApiService {
    */
   async isModelReady() {
     try {
-      const base = await this.ensureBaseURL();
-      const response = await axios.get(`${base}/`, {
-        timeout: 5000
-      });
-      return response.data.status === 'ok';
+      if (!this.huggingFaceToken) {
+        return false;
+      }
+      return await this.checkModelStatus();
     } catch (error) {
-      console.error('Model API Health Check Error:', error.message);
+      console.error('HuggingFace Model API Health Check Error:', error.message);
       return false;
     }
   }
 
   /**
-   * ดึงข้อมูล taxonomy ของโมเดล
+   * ดึงข้อมูล taxonomy ของโมเดล (สำหรับ HuggingFace)
    * @returns {Promise<Object>}
    */
   async getModelTaxonomy() {
     try {
-      const base = await this.ensureBaseURL();
-      const response = await axios.get(`${base}/meta`, {
+      if (!this.huggingFaceToken) {
+        throw new Error('HuggingFace API token is required');
+      }
+
+      // HuggingFace ไม่มี endpoint สำหรับ taxonomy โดยตรง
+      // เราจะ return ข้อมูล metadata พื้นฐาน
+      const modelInfo = await axios.get(`https://huggingface.co/api/models/${this.modelName}`, {
         timeout: 5000
       });
+
+      // สร้าง taxonomy จำลองตามโครงสร้างเดิม
+      const taxonomy = {
+        classes: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'],
+        model_info: {
+          name: this.modelName,
+          pipeline_tag: modelInfo.data.pipeline_tag || 'image-classification',
+          library_name: modelInfo.data.library_name || 'transformers'
+        }
+      };
+
       return {
         success: true,
-        data: response.data
+        data: { taxonomy }
       };
     } catch (error) {
-      console.error('Model API Taxonomy Error:', error.message);
+      console.error('HuggingFace Model Taxonomy Error:', error.message);
       return {
         success: false,
-        error: error.response?.data?.detail || error.message
+        error: error.response?.data?.error || error.message
       };
     }
   }
 
   /**
-   * ตรวจสอบความสอดคล้องของประเภทปลากัด
+   * ตรวจสอบความสอดคล้องของประเภทปลากัด (ไม่เปลี่ยนแปลง - ใช้ได้กับทุกโมเดล)
    * @param {string} userSelectedType - ประเภทที่ผู้ใช้เลือก (A, B, C, D, E, F, G, H)
    * @param {Array<string>} allowedTypes - ประเภทที่การประกวดอนุญาต
    * @param {string} aiPredictedType - ประเภทที่ AI ตรวจพบ

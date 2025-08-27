@@ -612,6 +612,402 @@ class ExpertService {
       throw new Error(`ไม่สามารถดึงสถิติภาระงานได้: ${error.message}`);
     }
   }
+
+  /**
+   * ดึงข้อมูล Analytics ครบถ้วนสำหรับ Dashboard
+   */
+  async getAnalyticsData(expertId, timeRangeDays = 30) {
+    try {
+      const endDate = new Date();
+      const startDate = new Date(endDate - timeRangeDays * 24 * 60 * 60 * 1000);
+
+      // ดึงข้อมูลพื้นฐาน
+      const [performanceStats, workloadStats] = await Promise.all([
+        this.getPerformanceStats(expertId),
+        this.getWorkloadStats(expertId)
+      ]);
+
+      // ดึงข้อมูลสำหรับกราฟ weekly performance
+      const { data: weeklyData } = await supabase
+        .from('assignments')
+        .select('evaluated_at, quality_scores')
+        .eq('evaluator_id', expertId)
+        .eq('status', 'evaluated')
+        .gte('evaluated_at', new Date(endDate - 7 * 24 * 60 * 60 * 1000).toISOString())
+        .order('evaluated_at', { ascending: true });
+
+      // ประมวลผลข้อมูลรายสัปดาห์
+      const weeklyPerformance = this.processWeeklyData(weeklyData);
+
+      // ดึงข้อมูลความเชี่ยวชาญ
+      const specialtyStats = await this.getSpecialtyStats(expertId);
+
+      // คำนวณอันดับ Expert
+      const expertRank = await this.calculateExpertRank(expertId);
+
+      return {
+        overview: {
+          totalEvaluations: performanceStats.completedAssignments,
+          completionRate: parseFloat(performanceStats.completionRate),
+          averageScore: await this.getAverageScore(expertId),
+          expertRank: expertRank.rank,
+          totalExperts: expertRank.total,
+          streak: await this.calculateStreak(expertId),
+          levelProgress: await this.calculateLevelProgress(expertId)
+        },
+        performance: {
+          weeklyData: weeklyPerformance,
+          monthlyGrowth: await this.calculateMonthlyGrowth(expertId),
+          accuracyTrend: 'up', // TODO: implement actual calculation
+          speedImprovement: await this.calculateSpeedImprovement(expertId)
+        },
+        specialties: specialtyStats,
+        achievements: await this.getAchievements(expertId)
+      };
+    } catch (error) {
+      throw new Error(`ไม่สามารถดึงข้อมูล Analytics ได้: ${error.message}`);
+    }
+  }
+
+  /**
+   * ประมวลผลข้อมูลรายสัปดาห์
+   */
+  processWeeklyData(rawData) {
+    const days = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+    const weekData = Array(7).fill(0).map((_, i) => ({
+      day: days[i],
+      evaluations: 0,
+      avgScore: 0,
+      totalScore: 0
+    }));
+
+    rawData?.forEach(item => {
+      const dayIndex = new Date(item.evaluated_at).getDay();
+      weekData[dayIndex].evaluations += 1;
+      if (item.quality_scores?.total_score) {
+        weekData[dayIndex].totalScore += item.quality_scores.total_score;
+      }
+    });
+
+    // คำนวณคะแนนเฉลี่ย
+    weekData.forEach(day => {
+      if (day.evaluations > 0) {
+        day.avgScore = parseFloat((day.totalScore / day.evaluations).toFixed(1));
+      }
+    });
+
+    return weekData;
+  }
+
+  /**
+   * ดึงสถิติตามความเชี่ยวชาญ
+   */
+  async getSpecialtyStats(expertId) {
+    try {
+      const { data: assignments } = await supabase
+        .from('assignments')
+        .select(`
+          quality_scores,
+          submission:submissions!inner(
+            fish_type
+          )
+        `)
+        .eq('evaluator_id', expertId)
+        .eq('status', 'evaluated');
+
+      const specialtyMap = {};
+      
+      assignments?.forEach(assignment => {
+        const fishType = assignment.submission?.fish_type;
+        if (fishType) {
+          if (!specialtyMap[fishType]) {
+            specialtyMap[fishType] = {
+              count: 0,
+              totalScore: 0,
+              scores: []
+            };
+          }
+          specialtyMap[fishType].count += 1;
+          if (assignment.quality_scores?.total_score) {
+            specialtyMap[fishType].totalScore += assignment.quality_scores.total_score;
+            specialtyMap[fishType].scores.push(assignment.quality_scores.total_score);
+          }
+        }
+      });
+
+      return Object.entries(specialtyMap).map(([fishType, stats]) => ({
+        type: this.getFishTypeDisplayName(fishType),
+        count: stats.count,
+        avgScore: stats.count > 0 ? parseFloat((stats.totalScore / stats.count).toFixed(1)) : 0,
+        expertise: this.calculateExpertiseLevel(stats.count, stats.scores),
+        color: this.getFishTypeColor(fishType),
+        icon: this.getFishTypeIcon(fishType)
+      }));
+    } catch (error) {
+      throw new Error(`ไม่สามารถดึงสถิติความเชี่ยวชาญได้: ${error.message}`);
+    }
+  }
+
+  /**
+   * คำนวณอันดับ Expert
+   */
+  async calculateExpertRank(expertId) {
+    try {
+      const { data: allExperts } = await supabase
+        .from('assignments')
+        .select('evaluator_id, quality_scores')
+        .eq('status', 'evaluated');
+
+      const expertScores = {};
+      allExperts?.forEach(assignment => {
+        const id = assignment.evaluator_id;
+        if (!expertScores[id]) {
+          expertScores[id] = { total: 0, count: 0 };
+        }
+        if (assignment.quality_scores?.total_score) {
+          expertScores[id].total += assignment.quality_scores.total_score;
+          expertScores[id].count += 1;
+        }
+      });
+
+      const rankings = Object.entries(expertScores)
+        .map(([id, scores]) => ({
+          expertId: id,
+          avgScore: scores.count > 0 ? scores.total / scores.count : 0,
+          totalEvaluations: scores.count
+        }))
+        .sort((a, b) => b.avgScore - a.avgScore || b.totalEvaluations - a.totalEvaluations);
+
+      const rank = rankings.findIndex(r => r.expertId === expertId) + 1;
+      
+      return {
+        rank: rank || rankings.length + 1,
+        total: rankings.length
+      };
+    } catch (error) {
+      return { rank: 1, total: 1 };
+    }
+  }
+
+  /**
+   * คำนวณ streak (วันทำงานติดต่อกัน)
+   */
+  async calculateStreak(expertId) {
+    try {
+      const { data: evaluations } = await supabase
+        .from('assignments')
+        .select('evaluated_at')
+        .eq('evaluator_id', expertId)
+        .eq('status', 'evaluated')
+        .order('evaluated_at', { ascending: false })
+        .limit(100);
+
+      if (!evaluations || evaluations.length === 0) return 0;
+
+      let streak = 0;
+      let currentDate = new Date();
+      currentDate.setHours(0, 0, 0, 0);
+
+      const workDays = evaluations.map(e => {
+        const date = new Date(e.evaluated_at);
+        date.setHours(0, 0, 0, 0);
+        return date.getTime();
+      });
+
+      const uniqueDays = [...new Set(workDays)].sort((a, b) => b - a);
+
+      for (let i = 0; i < uniqueDays.length; i++) {
+        const expectedTime = currentDate.getTime() - (i * 24 * 60 * 60 * 1000);
+        if (uniqueDays[i] === expectedTime) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+
+      return streak;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * คำนวณความก้าวหน้าของ Level
+   */
+  async calculateLevelProgress(expertId) {
+    try {
+      const stats = await this.getPerformanceStats(expertId);
+      const totalEvals = stats.completedAssignments;
+      
+      // Level system: Level = floor(totalEvals / 50) + 1
+      const currentLevel = Math.floor(totalEvals / 50) + 1;
+      const progressInCurrentLevel = totalEvals % 50;
+      const progressPercentage = (progressInCurrentLevel / 50) * 100;
+      
+      return Math.round(progressPercentage);
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * คำนวณการเจริญเติบโตรายเดือน
+   */
+  async calculateMonthlyGrowth(expertId) {
+    try {
+      const now = new Date();
+      const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+      const [thisMonthCount, lastMonthCount] = await Promise.all([
+        supabase.from('assignments').select('*', { count: 'exact', head: true })
+          .eq('evaluator_id', expertId).eq('status', 'evaluated')
+          .gte('evaluated_at', thisMonth.toISOString()),
+        supabase.from('assignments').select('*', { count: 'exact', head: true })
+          .eq('evaluator_id', expertId).eq('status', 'evaluated')
+          .gte('evaluated_at', lastMonth.toISOString())
+          .lt('evaluated_at', thisMonth.toISOString())
+      ]);
+
+      const thisCount = thisMonthCount.count || 0;
+      const lastCount = lastMonthCount.count || 0;
+      
+      if (lastCount === 0) return thisCount > 0 ? 100 : 0;
+      
+      return parseFloat((((thisCount - lastCount) / lastCount) * 100).toFixed(1));
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * คำนวณการปรับปรุงความเร็ว
+   */
+  async calculateSpeedImprovement(expertId) {
+    // สำหรับตอนนี้ return ค่า mock
+    // ในอนาคตจะคำนวณจากเวลาที่ใช้ในการประเมินแต่ละครั้ง
+    return 18.3;
+  }
+
+  /**
+   * ดึงคะแนนเฉลี่ยของ Expert
+   */
+  async getAverageScore(expertId) {
+    try {
+      const { data: scores } = await supabase
+        .from('assignments')
+        .select('quality_scores')
+        .eq('evaluator_id', expertId)
+        .eq('status', 'evaluated');
+
+      if (!scores || scores.length === 0) return 0;
+
+      const validScores = scores
+        .filter(s => s.quality_scores?.total_score)
+        .map(s => s.quality_scores.total_score);
+
+      if (validScores.length === 0) return 0;
+
+      const average = validScores.reduce((sum, score) => sum + score, 0) / validScores.length;
+      return parseFloat(average.toFixed(1));
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * ดึงข้อมูล Achievements
+   */
+  async getAchievements(expertId) {
+    try {
+      const stats = await this.getPerformanceStats(expertId);
+      const avgScore = await this.getAverageScore(expertId);
+      const streak = await this.calculateStreak(expertId);
+
+      const achievements = [
+        {
+          id: 1,
+          title: 'Master Evaluator',
+          description: 'ประเมิน 100+ ปลากัด',
+          icon: '🎯',
+          earned: stats.completedAssignments >= 100,
+          rarity: 'legendary'
+        },
+        {
+          id: 2,
+          title: 'Speed Demon',
+          description: 'ประเมินเร็วที่สุด 10 ครั้ง',
+          icon: '⚡',
+          earned: stats.completedAssignments >= 50, // mock condition
+          rarity: 'epic'
+        },
+        {
+          id: 3,
+          title: 'Accuracy Expert',
+          description: 'ความแม่นยำ 95%+',
+          icon: '🎯',
+          earned: parseFloat(stats.completionRate) >= 95,
+          rarity: 'rare'
+        },
+        {
+          id: 4,
+          title: 'Streak Keeper',
+          description: 'ทำงาน 30 วันติดต่อกัน',
+          icon: '🔥',
+          earned: streak >= 30,
+          rarity: 'legendary'
+        },
+        {
+          id: 5,
+          title: 'Community Helper',
+          description: 'ช่วยเหลือ Expert อื่น',
+          icon: '🤝',
+          earned: stats.completedAssignments >= 25, // mock condition
+          rarity: 'common'
+        },
+        {
+          id: 6,
+          title: 'Innovation Pioneer',
+          description: 'ใช้ AI Analysis 50+ ครั้ง',
+          icon: '🚀',
+          earned: false, // TODO: implement AI usage tracking
+          rarity: 'epic'
+        }
+      ];
+
+      return achievements;
+    } catch (error) {
+      return [];
+    }
+  }
+
+  // Helper methods
+  calculateExpertiseLevel(count, scores) {
+    if (count >= 50) return 'expert';
+    if (count >= 20) return 'advanced';
+    if (count >= 5) return 'intermediate';
+    return 'beginner';
+  }
+
+  getFishTypeColor(fishType) {
+    const colorMap = {
+      'D': 'from-cyan-500 to-blue-500',
+      'B': 'from-green-500 to-emerald-500',
+      'A': 'from-amber-500 to-yellow-500',
+      'C': 'from-teal-500 to-cyan-500'
+    };
+    return colorMap[fishType] || 'from-gray-500 to-gray-600';
+  }
+
+  getFishTypeIcon(fishType) {
+    const iconMap = {
+      'D': '🏆',
+      'B': '🌾',
+      'A': '🏛️',
+      'C': '🏝️'
+    };
+    return iconMap[fishType] || '🐟';
+  }
 }
 
 module.exports = new ExpertService();

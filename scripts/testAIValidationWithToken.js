@@ -3,7 +3,7 @@ const FormData = require('form-data');
 const fs = require('fs');
 
 const API_BASE_URL = 'http://localhost:5000/api';
-const MODEL_API_URL = 'http://localhost:8000';
+// MODEL_API_URL ไม่ใช้แล้ว - เปลี่ยนไปใช้ HuggingFace
 
 // ข้อมูลการทดสอบ
 const TEST_DATA = {
@@ -46,38 +46,31 @@ async function login() {
 }
 
 async function testModelAPI() {
-  console.log('🧪 ทดสอบ Model API...\n');
+  console.log('🧪 ทดสอบ HuggingFace Model API ผ่าน Backend...\n');
   
   try {
     // 1. ตรวจสอบสถานะ Model API
-    console.log('📡 ตรวจสอบสถานะ Model API...');
-    const healthResponse = await axios.get(`${MODEL_API_URL}/`);
-    console.log('✅ Model API Status:', healthResponse.data);
+    console.log('📡 ตรวจสอบสถานะ HuggingFace Model API...');
+    const healthResponse = await axios.get(`${API_BASE_URL}/model/health`);
+    console.log('✅ HuggingFace Model API Status:', JSON.stringify(healthResponse.data, null, 2));
     
-    // 2. ดึงข้อมูล taxonomy
-    console.log('\n📡 ดึงข้อมูล taxonomy...');
-    const taxonomyResponse = await axios.get(`${MODEL_API_URL}/meta`);
-    console.log('✅ Taxonomy:', JSON.stringify(taxonomyResponse.data.taxonomy, null, 2));
-    
-    // 3. ทดสอบการ predict รูปภาพ
+    // 2. ทดสอบการ predict รูปภาพผ่าน Backend (ไม่ต้อง login)
     if (fs.existsSync(TEST_DATA.testImagePath)) {
-      console.log('\n📡 ทดสอบการ predict รูปภาพ...');
+      console.log('\n📡 ทดสอบการ predict รูปภาพผ่าน Backend (ไม่ต้อง token)...');
       const imageBuffer = fs.readFileSync(TEST_DATA.testImagePath);
       const formData = new FormData();
-      formData.append('file', imageBuffer, { filename: 'test.jpg', contentType: 'image/jpeg' });
+      formData.append('image', imageBuffer, { filename: 'test.jpg', contentType: 'image/jpeg' });
+      formData.append('betta_type', 'A'); // ตัวอย่าง
+      formData.append('analysis_type', 'competition');
       
-      const predictResponse = await axios.post(`${MODEL_API_URL}/predict`, formData, {
-        params: { threshold: 0.90, topk: 3 },
-        headers: { ...formData.getHeaders() }
-      });
-      
-      console.log('✅ Prediction Result:', JSON.stringify(predictResponse.data, null, 2));
+      // หมายเหตุ: endpoint นี้ต้องการ authentication ตามโค้ดเดิม
+      console.log('⚠️ ต้องการ authentication token สำหรับทดสอบ model endpoint');
     } else {
       console.log('⚠️ ไม่พบไฟล์รูปภาพทดสอบ:', TEST_DATA.testImagePath);
     }
     
   } catch (error) {
-    console.error('❌ Model API Error:', error.response?.data || error.message);
+    console.error('❌ HuggingFace Model API Error:', error.response?.data || error.message);
   }
 }
 

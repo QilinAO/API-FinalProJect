@@ -13,6 +13,7 @@
   "dependencies": {
     "@cloudinary/react": "^1.14.3",
     "@cloudinary/url-gen": "^1.21.0",
+    "@gradio/client": "^1.17.1",
     "@supabase/supabase-js": "^2.50.0",
     "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",

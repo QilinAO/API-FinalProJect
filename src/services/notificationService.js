@@ -22,7 +22,9 @@ class NotificationService {
 
   #isMissingTypeOrMetaErr(error) {
     const msg = String(error?.message || '').toLowerCase();
-    return msg.includes('column "type" does not exist') || msg.includes('column "meta" does not exist');
+    return msg.includes('column "type" does not exist') || 
+           msg.includes('column "meta" does not exist') ||
+           msg.includes('column "title" does not exist');
   }
 
   // ---------------- Create (object style) ----------------
@@ -42,7 +44,7 @@ class NotificationService {
     let q = supabaseAdmin.from('notifications').insert([row]).select().single();
     let { data, error } = await q;
 
-    // ถ้าตารางยังไม่มีคอลัมน์ type/meta → fallback
+    // ถ้าตารางยังไม่มีคอลัมน์ type/meta/title → fallback
     if (error && this.#isMissingTypeOrMetaErr(error)) {
       const fallback = { user_id: row.user_id, message: row.message, link_to: row.link_to };
       const result = await supabaseAdmin.from('notifications').insert([fallback]).select().single();

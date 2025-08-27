@@ -241,6 +241,16 @@ class ExpertController {
     const stats = await ExpertService.getWorkloadStats(req.userId);
     res.json({ success: true, data: stats });
   });
+
+  /**
+   * ดึงข้อมูล Analytics Dashboard
+   * Route: GET /api/experts/analytics
+   */
+  getAnalytics = asyncWrapper(async (req, res) => {
+    const { timeRange = 30 } = req.query;
+    const analytics = await ExpertService.getAnalyticsData(req.userId, parseInt(timeRange));
+    res.json({ success: true, data: analytics });
+  });
 }
 
 module.exports = new ExpertController();

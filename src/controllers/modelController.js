@@ -44,7 +44,7 @@ class ModelController {
         betta_type,
         betta_age_months: betta_age_months ? parseInt(betta_age_months) : null,
         analysis_type: analysis_type || 'quality', // 'quality' หรือ 'competition'
-        user_id: req.user?.id
+        user_id: req.user?.id || null // อนุญาตให้เป็น null สำหรับ anonymous analysis
       };
 
       const result = await modelApiService.predictBettaType(
@@ -80,7 +80,7 @@ class ModelController {
         betta_type,
         betta_age_months: betta_age_months ? parseInt(betta_age_months) : null,
         analysis_type: analysis_type || 'quality',
-        user_id: req.user?.id
+        user_id: req.user?.id || null // อนุญาตให้เป็น null สำหรับ anonymous analysis
       };
 
       // แปลงไฟล์เป็นรูปแบบที่ service ต้องการ
@@ -107,23 +107,25 @@ class ModelController {
   }
 
   /**
-   * ตรวจสอบสถานะ Model API
+   * ตรวจสอบสถานะ Model API (HuggingFace)
    * GET /api/model/health
    */
   async checkModelHealth(req, res) {
     try {
-      const health = await modelApiService.checkHealth();
+      const isReady = await modelApiService.isModelReady();
       
       // ส่งข้อมูลกลับในรูปแบบที่ถูกต้อง
       res.json(success({
-        available: health.available,
-        status: health.status,
+        available: isReady,
+        status: isReady ? 200 : 503,
+        service: 'HuggingFace Inference API',
+        model: process.env.HUGGINGFACE_MODEL_NAME || 'not-configured',
         checked_at: new Date().toISOString()
-      }, health.message));
+      }, isReady ? 'HuggingFace model is ready' : 'HuggingFace model is not available'));
 
     } catch (err) {
       console.error('Error in checkModelHealth:', err);
-      res.status(500).json(error('ไม่สามารถตรวจสอบสถานะ Model API ได้'));
+      res.status(500).json(error('ไม่สามารถตรวจสอบสถานะ HuggingFace Model API ได้'));
     }
   }
 

@@ -194,5 +194,6 @@ router.get('/scoring-schema/:bettaType', expertController.getScoringSchema);
 // ============= Statistics Routes =============
 router.get('/stats/performance', expertController.getPerformanceStats);
 router.get('/stats/workload', expertController.getWorkloadStats);
+router.get('/analytics', expertController.getAnalytics);
 
 module.exports = router;

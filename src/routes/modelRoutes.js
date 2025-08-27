@@ -14,18 +14,18 @@ const { validateImageAnalysis } = require('../middleware/validation');
 
 const router = express.Router();
 
-// ตรวจสอบสถานะ Model API (ไม่ต้อง auth)
+// Routes ที่ไม่ต้อง authentication (สำหรับ Frontend auto-analysis)
 router.get('/health', modelController.checkModelHealth.bind(modelController));
 
-// Routes ที่ต้อง authentication
-router.use(requireAuth);
-
-// วิเคราะห์รูปภาพเดี่ยว
+// วิเคราะห์รูปภาพเดี่ยว (ไม่ต้อง auth สำหรับ auto-analysis)
 router.post('/analyze-single', 
   uploadSingle,
   validateImageAnalysis,
   modelController.analyzeSingleImage.bind(modelController)
 );
+
+// Routes ที่ต้อง authentication
+router.use(requireAuth);
 
 // วิเคราะห์หลายรูปภาพพร้อมกัน
 router.post('/analyze-batch',
