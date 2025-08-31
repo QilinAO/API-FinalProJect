@@ -21,11 +21,11 @@ class AuthController {
    * Route: POST /api/auth/signup
    */
   signUp = asyncWrapper(async (req, res) => {
-    const { data } = await AuthService.signUp(req.body);
+    const result = await AuthService.signUp(req.body);
 
     // ส่งการแจ้งเตือน (Fire-and-forget, ไม่ต้องรอ)
-    if (data.user) {
-      checklistNotifier.onUserSignUp(data.user).catch(err => 
+    if (result && result.user) {
+      checklistNotifier.onUserSignUp(result.user).catch(err => 
         console.warn('[ChecklistNotifier] SignUp notification failed:', err.message)
       );
     }
@@ -33,7 +33,7 @@ class AuthController {
     res.status(201).json({
       success: true,
       message: 'การสมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมลเพื่อยืนยันตัวตน',
-      user: data.user,
+      user: result.user,
     });
   });
 

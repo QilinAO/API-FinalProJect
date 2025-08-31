@@ -65,7 +65,7 @@ class ManagerService {
   }
 
   async createContestOrNews(managerId, contestData) {
-    const { name, short_description, full_description, category, status, start_date, end_date, is_vote_open, allowed_subcategories, poster_url } = contestData;
+    const { name, short_description, full_description, category, status, start_date, end_date, is_vote_open, allowed_subcategories, poster_url, fish_type } = contestData;
     const isCompetition = category === 'การประกวด';
     const defaultStatus = isCompetition ? 'draft' : 'published';
     const allowedStatuses = isCompetition ? ['draft', 'กำลังดำเนินการ', 'ปิดรับสมัคร', 'ตัดสิน', 'ประกาศผล', 'ยกเลิก'] : ['draft', 'published', 'archived'];
@@ -77,6 +77,7 @@ class ManagerService {
       is_vote_open: isCompetition ? !!is_vote_open : false,
       allowed_subcategories: isCompetition && Array.isArray(allowed_subcategories) ? allowed_subcategories : [],
       poster_url,
+      fish_type: isCompetition ? (fish_type || null) : null,
       created_by: managerId,
     };
     const { data, error } = await supabaseAdmin.from('contests').insert(row).select().single();
@@ -88,7 +89,7 @@ class ManagerService {
     if (!(await this.#isContestOwner(contestId, managerId))) {
       throw new Error('ไม่ได้รับอนุญาตให้แก้ไข');
     }
-    const allowedFields = ['name', 'short_description', 'full_description', 'poster_url', 'category', 'start_date', 'end_date', 'status', 'is_vote_open', 'allowed_subcategories'];
+    const allowedFields = ['name', 'short_description', 'full_description', 'poster_url', 'category', 'start_date', 'end_date', 'status', 'is_vote_open', 'allowed_subcategories', 'fish_type'];
     const dataToUpdate = {};
     for (const key of allowedFields) {
       if (updateData[key] !== undefined) {
@@ -138,7 +139,8 @@ class ManagerService {
     return updated;
   }
 
-  async getExpertList() {
+  async getExpertList(contestId = null) {
+    // ดึงผู้เชี่ยวชาญทั้งหมด
     const { data, error } = await supabase.from('profiles').select('id, username, first_name, last_name, specialities').eq('role', 'expert');
     if (error) throw new Error(error.message);
     return data;

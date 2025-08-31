@@ -4,9 +4,23 @@ const express = require('express');
 const router = express.Router();
 
 // --- Imports ---
-const { userController, uploadMiddleware } = require('../controllers/userController');
+const userController = require('../controllers/userController');
 const authMiddleware = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
+const multer = require('multer');
+
+// Multer configuration for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/jpg'].includes(file.mimetype)) {
+      return cb(null, true);
+    }
+    cb(new Error('ไฟล์ต้องเป็นรูปภาพเท่านั้น (JPEG, PNG หรือ JPG)'));
+  },
+});
 
 // =================================================================
 //  Profile (ต้องล็อกอิน)
@@ -30,7 +44,7 @@ router.put(
 router.post(
   '/profile/picture',
   authMiddleware,
-  uploadMiddleware,
+  upload.single('profilePicture'),
   userController.uploadProfilePicture
 );
 

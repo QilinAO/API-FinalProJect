@@ -88,7 +88,8 @@ class ManagerController {
 
   // ----- Judges Management -----
   getExpertList = asyncWrapper(async (req, res) => {
-    const experts = await ManagerService.getExpertList();
+    const { contest_id } = req.query;
+    const experts = await ManagerService.getExpertList(contest_id);
     res.status(200).json({ success: true, data: experts });
   });
 

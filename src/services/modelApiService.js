@@ -4,7 +4,8 @@
 // ======================================================================
 
 const axios = require('axios');
-const { Client } = require('@gradio/client');
+// ใช้ Dynamic Import สำหรับ ES Module
+let Client = null;
 
 class ModelApiService {
   constructor() {
@@ -50,7 +51,11 @@ class ModelApiService {
     try {
       console.log('🔍 กำลังดึงสเปกของ Space...');
       
-      // สร้าง Gradio client
+      // สร้าง Gradio client - ใช้ Dynamic Import
+      if (!Client) {
+        const { Client: GradioClient } = await import('@gradio/client');
+        Client = GradioClient;
+      }
       this.gradioClient = await Client.connect(this.spaceUrl);
       
       // ดึง API info

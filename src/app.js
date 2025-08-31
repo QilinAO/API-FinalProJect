@@ -78,7 +78,7 @@ const limiter = rateLimit({
 app.use('/api', limiter);
 
 const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/userRoutes');
+const userRoutes = require('./routes/users');
 const managerRoutes = require('./routes/managerRoutes');
 const expertRoutes = require('./routes/expertRoutes');
 const submissionRoutes = require('./routes/submissionRoutes');

@@ -14,6 +14,8 @@ class AuthService {
     async signUp(userData) {
         const { email, password, firstName, lastName, username } = userData;
 
+        console.log('🔍 SignUp attempt for:', { email, firstName, lastName, username });
+
         // สร้างผู้ใช้ในระบบ Authentication ของ Supabase
         // โดยแนบข้อมูลโปรไฟล์ทั้งหมด (รวมถึงการบังคับ role: 'user')
         // เข้าไปใน property `options.data` เพื่อให้ Database Trigger จัดการสร้างโปรไฟล์โดยอัตโนมัติ
@@ -30,21 +32,35 @@ class AuthService {
             }
         });
 
+        console.log('🔍 Supabase response:', { data: !!data, error: !!error, dataKeys: data ? Object.keys(data) : 'no data' });
+        console.log('🔍 Full data object:', JSON.stringify(data, null, 2));
+
         // ตรวจสอบ Error ที่อาจเกิดขึ้นจากการสร้างผู้ใช้ในระบบ Auth
         if (error) {
             // ดักจับ Error ที่พบบ่อยและแปลงเป็นข้อความที่เข้าใจง่าย
-            if (error.message.includes('User already registered')) {
+            if (error.message && error.message.includes('User already registered')) {
                 throw new Error('มีผู้ใช้อีเมลนี้ในระบบแล้ว');
             }
             // หากเป็น Error อื่นๆ ให้ส่งข้อความจาก Supabase ไปตรงๆ
-            throw new Error('Supabase Auth Error: ' + error.message);
+            throw new Error('Supabase Auth Error: ' + (error.message || 'Unknown error'));
         }
 
-        // ตรวจสอบเผื่อกรณีสุดวิสัยที่ Supabase ไม่ได้คืนข้อมูล user กลับมา
-        if (!data.user) {
+        // ตรวจสอบกรณีที่ Supabase ส่ง error: true กลับมา
+        if (data && data.error === true) {
+            console.error('❌ Supabase returned error: true');
+            console.error('Data:', JSON.stringify(data, null, 2));
             throw new Error('ไม่สามารถสร้างผู้ใช้ได้ กรุณาลองอีกครั้ง');
         }
 
+        // ตรวจสอบเผื่อกรณีสุดวิสัยที่ Supabase ไม่ได้คืนข้อมูล user กลับมา
+        if (!data || !data.user) {
+            console.error('❌ Invalid Supabase response structure');
+            console.error('Expected: { user: {...} }');
+            console.error('Received:', JSON.stringify(data, null, 2));
+            throw new Error('ไม่สามารถสร้างผู้ใช้ได้ กรุณาลองอีกครั้ง');
+        }
+
+        // Supabase v2 อาจไม่คืน session ในการ signup
         // คืนข้อมูล user ที่สร้างสำเร็จกลับไปให้ Controller
         return data;
     }
