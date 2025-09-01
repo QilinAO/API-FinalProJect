@@ -10,7 +10,7 @@ const rateLimit = require('express-rate-limit');
 const errorReporter = require('./utils/errorReporter');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000; // Use .env or default to 5000
 
 app.set('trust proxy', 1);
 app.use(
@@ -19,29 +19,31 @@ app.use(
   })
 );
 
+// Parse origins from environment or use defaults
 const parseOrigins = (s) =>
   (s || 'http://localhost:5173,http://localhost:5174,http://localhost:5175')
     .split(',')
     .map((x) => x.trim())
     .filter(Boolean);
 
-// 确保包含端口5175
-const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175';
+const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175,https://final-project-eel25bszb-anmingaos-projects.vercel.app,https://final-project-dkwm7i2uo-anmingaos-projects.vercel.app,https://final-project-mt9u2bm77-anmingaos-projects.vercel.app';
 const ALLOWED_ORIGINS = parseOrigins(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || DEFAULT_ORIGINS);
 
-// 调试信息
-console.log('CORS Configuration:');
-console.log('NODE_ENV:', process.env.NODE_ENV);
-console.log('FRONTEND_URLS:', process.env.FRONTEND_URLS);
-console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-console.log('ALLOWED_ORIGINS:', ALLOWED_ORIGINS);
+// Configuration logging
+console.log('🚀 Railway Configuration:');
+console.log('📍 PORT:', process.env.PORT || 'Not set (will use 5000)');
+console.log('🌍 NODE_ENV:', process.env.NODE_ENV || 'development');
+console.log('🔗 FRONTEND_URLS:', process.env.FRONTEND_URLS);
+console.log('🎯 FRONTEND_URL:', process.env.FRONTEND_URL);
+console.log('🌐 ALLOWED_ORIGINS:', ALLOWED_ORIGINS);
+console.log('📡 Railway Environment:', process.env.RAILWAY_ENVIRONMENT || 'Not set');
 
 const corsOptions = {
-  origin: true, // 开发环境下允许所有origin
+  origin: ALLOWED_ORIGINS,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-user-id'],
-  optionsSuccessStatus: 200 // 某些浏览器需要这个
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
@@ -59,8 +61,55 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-app.get('/health', (_req, res) => res.json({ success: true, status: 'OK' }));
-app.get('/api/health', (_req, res) => res.json({ success: true, status: 'OK', service: 'betta-fish-api' }));
+// Health check routes for Railway
+// Health check endpoints for Railway
+app.get('/health', (_req, res) => {
+  try {
+    res.json({ 
+      success: true, 
+      status: 'OK', 
+      service: 'betta-fish-api',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      port: process.env.PORT || PORT
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: 'Health check failed',
+      message: error.message 
+    });
+  }
+});
+
+app.get('/api/health', (_req, res) => {
+  try {
+    res.json({ 
+      success: true, 
+      status: 'OK', 
+      service: 'betta-fish-api',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      port: process.env.PORT || PORT
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: 'Health check failed',
+      message: error.message 
+    });
+  }
+});
+
+app.get('/', (_req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Betta Fish API is running', 
+    health: '/health',
+    api: '/api/health',
+    timestamp: new Date().toISOString()
+  });
+});
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -107,15 +156,52 @@ const { handleDatabaseError } = require('./middleware/databaseErrorHandler');
 // Database error handling middleware (before global error handler)
 app.use(handleDatabaseError);
 
+// Graceful startup - don't crash if environment variables are missing
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err.message);
+  if (err.message.includes('Missing Supabase environment variables')) {
+    console.log('⚠️  API will start in limited mode without database connection');
+    console.log('🔧 Please check Railway Environment Variables');
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled Rejection:', reason);
+});
+
+// Graceful shutdown handlers
+function shutdown(signal) {
+  console.log(`\n🔄 [${signal}] Shutting down gracefully...`);
+  console.log('⏳ Closing HTTP server...');
+  
+  if (server) {
+    server.close(() => {
+      console.log('✅ HTTP server closed successfully');
+      console.log('👋 Goodbye!');
+      process.exit(0);
+    });
+    
+    // Force shutdown after 10 seconds if server doesn't close gracefully
+    setTimeout(() => {
+      console.log('⚠️  Force shutdown after timeout');
+      process.exit(0);
+    }, 10000).unref();
+  } else {
+    process.exit(0);
+  }
+}
+
+// Handle shutdown signals
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGUSR2', () => shutdown('SIGUSR2')); // For nodemon restart
+
 // Global error handler
 app.use((err, req, res, _next) => {
   try { errorReporter.report(err, req, { context: 'global-error' }); } catch {}
   
-  if (process.env.NODE_ENV !== 'production') {
-    console.error('[Unhandled Error]', err.stack || err);
-  } else {
-    console.error('[Unhandled Error]', err.message);
-  }
+  // Local development error logging
+  console.error('[Unhandled Error]', err.stack || err);
 
   // Enhanced error response with validation details
   const response = {
@@ -129,8 +215,8 @@ app.use((err, req, res, _next) => {
     response.details = err.details;
   }
 
-  // Add debug info in development
-  if (process.env.NODE_ENV === 'development' && err.stack) {
+  // Add debug info in local development
+  if (err.stack) {
     response.debug = {
       stack: err.stack,
       code: err.code
@@ -149,7 +235,18 @@ process.on('uncaughtException', (err) => {
   try { errorReporter.reportProcessError(err, 'uncaughtException'); } catch {}
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is flying on port ${PORT}`);
-  console.log(`Allowed CORS origins: ${ALLOWED_ORIGINS.join(', ') || '(none)'}`);
+// Create server instance for graceful shutdown
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log('\n🎉 Server Started Successfully!');
+  console.log('='.repeat(50));
+  console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 Health Check: http://0.0.0.0:${PORT}/api/health`);
+  console.log(`🎯 CORS Origins: ${ALLOWED_ORIGINS.join(', ') || '(none)'}`);
+  console.log(`📡 Railway Port: ${process.env.PORT || 'Not set'}`);
+  console.log('='.repeat(50));
+  console.log('✨ Ready to serve requests!\n');
 });
+
+// Export server for testing (if needed)
+module.exports = { app, server };

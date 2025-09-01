@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
+    "build": "echo 'No build step needed for Node.js API'",
     "test": "jest",
     "cron:assignments": "node cron-assignments.js",
-    "process:assignments": "node scripts/processAssignments.js"
+    "process:assignments": "node scripts/processAssignments.js",
+    "deploy:vercel": "vercel --prod"
   },
   "dependencies": {
     "@cloudinary/react": "^1.14.3",

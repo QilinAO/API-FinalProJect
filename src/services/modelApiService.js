@@ -24,9 +24,16 @@ class ModelApiService {
     this.gradioClient = null;
     
     if (!this.huggingFaceToken) {
-      console.warn('HUGGINGFACE_API_TOKEN not found in environment variables');
+      console.warn('⚠️ HUGGINGFACE_API_TOKEN not found in environment variables');
+      console.warn('   Model API will work in limited mode');
+    } else {
+      console.log('🔑 HuggingFace API Token: ✅ Set');
     }
     
+    console.log(`🤖 Model Configuration:`);
+    console.log(`   📍 Space ID: ${this.spaceId}`);
+    console.log(`   🌐 Space URL: ${this.spaceUrl}`);
+    console.log(`   🔧 API Type: ${this.useGradioAPI ? 'Gradio Space' : 'Inference'}`);
     console.log(`Using ${this.useGradioAPI ? 'Gradio Space' : 'Inference'} API for Space: ${this.spaceId}`);
   }
 

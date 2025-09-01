@@ -1,93 +1,186 @@
-# API-FinalProJect
+# 🐟 Betta Fish Project - Backend API
 
+## 🚀 Quick Start
 
+### Prerequisites
+- Node.js 18+
+- npm or yarn
+- Supabase account
 
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin http://54.151.172.44/finalproject/api-finalproject.git
-git branch -M main
-git push -uf origin main
+### Installation
+```bash
+npm install
 ```
 
-## Integrate with your tools
+### Environment Setup
+Copy `.env.example` to `.env` and configure:
+```env
+# Node Environment
+NODE_ENV=development
 
-- [ ] [Set up project integrations](http://54.151.172.44/finalproject/api-finalproject/-/settings/integrations)
+# Server Configuration
+PORT=5000
 
-## Collaborate with your team
+# Frontend URLs
+FRONTEND_URL=http://localhost:5173
+FRONTEND_URLS=http://localhost:5173,http://localhost:5174,http://localhost:5175
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+# Database Configuration (Supabase)
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
-## Test and Deploy
+# JWT Configuration
+JWT_SECRET=your_jwt_secret
+JWT_EXPIRES_IN=24h
 
-Use the built-in continuous integration in GitLab.
+# HuggingFace Model API
+HUGGINGFACE_API_TOKEN=your_token_here
+HUGGINGFACE_SPACE_ID=QilinAO/betta-ts-space
+HUGGINGFACE_SPACE_URL=https://qilinao-betta-ts-space.hf.space
+USE_GRADIO_API=true
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+### Development
+```bash
+npm run dev
+```
 
-***
+API will run at: http://localhost:5000
 
-# Editing this README
+### Production
+```bash
+npm start
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## 🔧 Configuration
 
-## Suggestions for a good README
+### CORS
+- Configured for localhost:5173, 5174, 5175
+- Supports multiple frontend origins
+- Credentials enabled
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Rate Limiting
+- 500 requests per 15 minutes per IP
+- Configurable via environment variables
 
-## Name
-Choose a self-explaining name for your project.
+### Database
+- Supabase PostgreSQL
+- Row Level Security (RLS) enabled
+- Service role for admin operations
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## 📁 Project Structure
+```
+src/
+├── config/          # Configuration files
+├── controllers/     # Route controllers
+├── middleware/      # Express middleware
+├── routes/          # API routes
+├── services/        # Business logic
+└── utils/           # Utility functions
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## 🔗 API Endpoints
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+### Public Routes
+- `GET /api/health` - Health check
+- `GET /api/public/contests` - Get active contests
+- `GET /api/public/content/*` - Public content
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+### Authentication Required
+- `POST /api/auth/signin` - User login
+- `POST /api/auth/signup` - User registration
+- `GET /api/users/*` - User operations
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### Model API
+- `GET /api/model/health` - Model status
+- `POST /api/model/predict` - AI prediction
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## 🤖 AI Model Integration
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### HuggingFace Space
+- **Space ID**: QilinAO/betta-ts-space
+- **API Type**: Gradio Space API
+- **Features**: Betta fish classification
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+### Configuration
+```env
+USE_GRADIO_API=true
+HUGGINGFACE_SPACE_ID=QilinAO/betta-ts-space
+HUGGINGFACE_API_TOKEN=your_token_here
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## 🛡️ Security Features
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+- **Helmet.js** - Security headers
+- **Rate Limiting** - DDoS protection
+- **CORS** - Cross-origin protection
+- **JWT Authentication** - Secure tokens
+- **Input Validation** - Request sanitization
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## 📊 Database Schema
 
-## License
-For open source projects, say how it is licensed.
+### Core Tables
+- `profiles` - User profiles
+- `contests` - Betta contests
+- `submissions` - Contest submissions
+- `evaluations` - Expert evaluations
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## 🚨 Error Handling
+
+- **Global Error Handler** - Centralized error management
+- **Database Error Handler** - Supabase error translation
+- **Validation Middleware** - Request validation
+- **Error Reporting** - Telegram notifications (optional)
+
+## 📝 Scripts
+
+- `npm run dev` - Start development server
+- `npm start` - Start production server
+- `npm test` - Run tests
+- `npm run cron:assignments` - Run assignment cron job
+
+## 🔍 Monitoring
+
+- **Health Checks** - `/api/health` endpoint
+- **Request Logging** - Morgan middleware
+- **Error Reporting** - Telegram bot integration
+- **Database Monitoring** - Connection status
+
+## 🚀 Deployment
+
+### Railway
+```bash
+railway up
+```
+
+### Render
+```bash
+render deploy
+```
+
+### Environment Variables
+Set all required environment variables in your deployment platform.
+
+## 📚 Documentation
+
+- [API Documentation](./API_DOCS.md)
+- [Deployment Guide](./DEPLOYMENT_BACKEND.md)
+- [Testing Guide](./TESTING_GUIDE.md)
+- [Security Guide](./SECURITY.md)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch
+3. Make changes
+4. Test thoroughly
+5. Submit pull request
+
+## 📄 License
+
+Private Project - All Rights Reserved
+
+---
+
+Made with ❤️ for BettaFish Community
