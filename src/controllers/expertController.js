@@ -1,3 +1,4 @@
+// /home/anming/Desktop/FinalProJects/API-FinalProJect/src/controllers/expertController.js
 // ======================================================================
 // File: src/controllers/expertController.js
 // หน้าที่: จัดการ Logic การทำงานทั้งหมดที่เกี่ยวข้องกับผู้เชี่ยวชาญ (Expert)
@@ -168,6 +169,34 @@ class ExpertController {
   getJudgingContests = asyncWrapper(async (req, res) => {
     const contests = await ExpertService.getJudgingContests(req.userId);
     res.json({ success: true, data: contests });
+  });
+  
+  // =================================================================
+  // ================ ฟังก์ชันใหม่ที่เพิ่มเข้ามาเพื่อแก้ Error ==============
+  // =================================================================
+  /**
+   * GET /api/experts/judging/:contestId/submissions
+   * ดึงข้อมูลปลาทั้งหมดที่ต้องตัดสินในการแข่งขันนั้นๆ
+   */
+  getSubmissionsForJudging = asyncWrapper(async (req, res) => {
+    const { contestId } = req.params;
+    const expertId = req.userId;
+
+    // ส่วนนี้จะเรียก Service เพื่อดึงข้อมูลปลาจริงๆ ต่อไป (ซึ่งอาจต้องสร้างในอนาคต)
+    // const submissions = await ExpertService.getSubmissionsForJudging(contestId, expertId);
+    console.log(`Fetching submissions for contest ${contestId} by expert ${expertId}`);
+    
+    // ส่งข้อมูลจำลอง (mock data) กลับไปก่อน เพื่อให้เซิร์ฟเวอร์สตาร์ทได้
+    const mockSubmissions = [
+      { id: 'sub_mock_1', betta_name: 'ปลาตัวอย่าง 1' },
+      { id: 'sub_mock_2', betta_name: 'ปลาตัวอย่าง 2' },
+    ];
+    
+    res.status(200).json({
+      success: true,
+      message: `Successfully fetched submissions for contest ${contestId}`,
+      data: mockSubmissions
+    });
   });
 
   /**

@@ -1,3 +1,4 @@
+// /home/anming/Desktop/FinalProJects/API-FinalProJect/src/routes/expertRoutes.js
 // ======================================================================
 // File: src/routes/expertRoutes.js
 // หน้าที่: กำหนด Routes สำหรับ Expert functions (เพิ่ม specialities management)
@@ -39,6 +40,12 @@ router.post('/assignments/:assignmentId/respond', expertController.respondToEval
 // ============= Contest Judging Routes =============
 router.get('/contests/judging', expertController.getJudgingContests);
 router.get('/judging', expertController.getJudgingContests); // Alias for frontend compatibility
+
+// ======================= บรรทัดนี้จะทำงานได้อย่างถูกต้องแล้ว =======================
+// ดึงข้อมูลปลาทั้งหมดที่ต้องตัดสินในการแข่งขันนั้นๆ
+router.get('/judging/:contestId/submissions', expertController.getSubmissionsForJudging);
+// =================================================================
+
 router.post('/contests/:contestId/accept', expertController.acceptJudging);
 router.post('/contests/:contestId/decline', expertController.declineJudging);
 

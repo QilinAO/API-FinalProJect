@@ -1,26 +1,35 @@
 // D:\ProJectFinal\Lasts\my-project\src\app.js
-require('dotenv').config();
 
+// =================================================================
+// SECTION: IMPORTS & INITIALIZATION
+// =================================================================
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-
 const errorReporter = require('./utils/errorReporter');
+const { handleDatabaseError } = require('./middleware/databaseErrorHandler');
 
 const app = express();
-const PORT = process.env.PORT || 5000; // Use .env or default to 5000
+const PORT = process.env.PORT || 5000;
 
+// =================================================================
+// SECTION: CORE MIDDLEWARE
+// =================================================================
+
+// Trust proxy for rate limiting and secure cookies in production
 app.set('trust proxy', 1);
+
+// Security Headers
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
 
-// --- ADJUSTMENT FOR LOCAL DEVELOPMENT ---
-// Hardcode the allowed origins to only local addresses
+// --- CORS Configuration for Local Development ---
 const ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://localhost:5174',
@@ -28,25 +37,13 @@ const ALLOWED_ORIGINS = [
     'http://localhost:3000'
 ];
 
-// Configuration logging
-console.log('🚀 Local Development Configuration:');
-console.log('📍 PORT:', process.env.PORT || 'Not set (will use 5000)');
-console.log('🌍 NODE_ENV:', process.env.NODE_ENV || 'development');
-console.log('🌐 ALLOWED_ORIGINS (Local Only):', ALLOWED_ORIGINS);
-
-
 const corsOptions = {
-  // Use a function to dynamically check the origin
   origin: (origin, callback) => {
-    // Allow requests with no origin (like Postman, curl, or mobile apps)
-    if (!origin) return callback(null, true);
-    
-    // If the origin is in our allowed list, allow it
-    if (ALLOWED_ORIGINS.indexOf(origin) !== -1) {
+    // Allow requests with no origin (like Postman, curl)
+    if (!origin || ALLOWED_ORIGINS.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      // Otherwise, disallow it
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error('This origin is not allowed by CORS policy.'));
     }
   },
   credentials: true,
@@ -54,77 +51,21 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-user-id'],
   optionsSuccessStatus: 200
 };
-// --- END OF ADJUSTMENT ---
-
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-app.use((err, req, res, next) => {
-  if (err && String(err.message || '').includes('not allowed by CORS')) {
-    try { errorReporter.report(err, req, { context: 'CORS' }); } catch {}
-    return res.status(403).json({ success: false, error: "CORS Error: " + err.message });
-  }
-  return next(err);
-});
-
+// Logging
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+
+// Body Parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Health check routes for Railway
-// Health check endpoints for Railway
-app.get('/health', (_req, res) => {
-  try {
-    res.json({
-      success: true,
-      status: 'OK',
-      service: 'betta-fish-api',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-      port: process.env.PORT || PORT
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Health check failed',
-      message: error.message
-    });
-  }
-});
-
-app.get('/api/health', (_req, res) => {
-  try {
-    res.json({
-      success: true,
-      status: 'OK',
-      service: 'betta-fish-api',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-      port: process.env.PORT || PORT
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Health check failed',
-      message: error.message
-    });
-  }
-});
-
-app.get('/', (_req, res) => {
-  res.json({
-    success: true,
-    message: 'Betta Fish API is running',
-    health: '/health',
-    api: '/api/health',
-    timestamp: new Date().toISOString()
-  });
-});
-
+// Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500, // Limit each IP to 500 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'คำขอมากเกินไป กรุณาลองใหม่ในภายหลัง' },
@@ -132,11 +73,52 @@ const limiter = rateLimit({
     const err = new Error('Too many requests');
     err.status = 429;
     try { errorReporter.report(err, req, { context: 'rate-limit' }); } catch {}
-    res.status(429).json(options.message);
+    res.status(options.statusCode).json(options.message);
   },
 });
 app.use('/api', limiter);
 
+
+// =================================================================
+// SECTION: HEALTH CHECK & ROOT ROUTES
+// =================================================================
+
+const healthCheckHandler = (_req, res) => {
+  try {
+    res.json({
+      success: true,
+      status: 'OK',
+      service: 'betta-fish-api',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Health check failed',
+      message: error.message
+    });
+  }
+};
+
+app.get('/health', healthCheckHandler);
+app.get('/api/health', healthCheckHandler);
+
+app.get('/', (_req, res) => {
+  res.json({
+    success: true,
+    message: 'Welcome to the Betta Fish API!',
+    health_check: '/api/health',
+    timestamp: new Date().toISOString()
+  });
+});
+
+
+// =================================================================
+// SECTION: API ROUTES
+// =================================================================
+
+// --- Route Imports ---
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const managerRoutes = require('./routes/managerRoutes');
@@ -147,131 +129,110 @@ const adminRoutes = require('./routes/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const modelRoutes = require('./routes/modelRoutes');
 
+// --- Route Middleware ---
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/manager', managerRoutes);
-// --- DEV stub for expert invitations/assignments (local only) ---
-if (process.env.OFFLINE_AUTH === 'true') {
-  const invitations = [
-    { id: 'inv_1', title: 'เชิญประเมินปลา A', status: 'pending', created_at: '2024-01-20T10:00:00Z' },
-    { id: 'inv_2', title: 'เชิญประเมินปลา B', status: 'pending', created_at: '2024-01-22T09:00:00Z' }
-  ];
-  const assignments = [
-    { id: 'job_1', title: 'งานประเมิน #1001', status: 'assigned', due_at: '2024-02-01T12:00:00Z' }
-  ];
-  // 支持多个路径：可用字符串数组，或正则写法需包含 /.../ 字面量
-  const INVITE_PATHS = ['/api/experts/invitations', '/api/experts/me/invitations'];
-  const ASSIGN_PATHS = ['/api/experts/assignments', '/api/experts/me/assignments'];
-  app.get(INVITE_PATHS, (req,res) => res.json(invitations));
-  app.get(ASSIGN_PATHS, (req,res) => res.json(assignments));
-}
 app.use('/api/experts', expertRoutes);
 app.use('/api/submissions', submissionRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/model', modelRoutes);
-app.use('/api', notificationRoutes);
+app.use('/api', notificationRoutes); // General API routes like notifications
 
+// Development-only stub for offline testing
+if (process.env.OFFLINE_AUTH === 'true') {
+  console.warn('⚠️ RUNNING IN OFFLINE AUTH MODE - STUBBING EXPERT DATA');
+  const invitations = [{ id: 'inv_1', title: 'เชิญประเมินปลา A', status: 'pending' }];
+  const assignments = [{ id: 'job_1', title: 'งานประเมิน #1001', status: 'assigned' }];
+  app.get(['/api/experts/invitations', '/api/experts/me/invitations'], (req,res) => res.json(invitations));
+  app.get(['/api/experts/assignments', '/api/experts/me/assignments'], (req,res) => res.json(assignments));
+}
+
+
+// =================================================================
+// SECTION: ERROR HANDLING
+// =================================================================
+
+// Custom Database Error Handler
+app.use(handleDatabaseError);
+
+// 404 Not Found Handler (must be after all routes)
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Endpoint Not Found' });
 });
 
-// Import enhanced error handlers
-const { handleDatabaseError } = require('./middleware/databaseErrorHandler');
-
-// Database error handling middleware (before global error handler)
-app.use(handleDatabaseError);
-
-// Graceful startup - don't crash if environment variables are missing
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err.message);
-  if (err.message.includes('Missing Supabase environment variables')) {
-    console.log('⚠️  API will start in limited mode without database connection');
-    console.log('🔧 Please check Railway Environment Variables');
-  }
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('❌ Unhandled Rejection:', reason);
-});
-
-// Graceful shutdown handlers
-function shutdown(signal) {
-  console.log(`\n🔄 [${signal}] Shutting down gracefully...`);
-  console.log('⏳ Closing HTTP server...');
-
-  if (server) {
-    server.close(() => {
-      console.log('✅ HTTP server closed successfully');
-      console.log('👋 Goodbye!');
-      process.exit(0);
-    });
-
-    // Force shutdown after 10 seconds if server doesn't close gracefully
-    setTimeout(() => {
-      console.log('⚠️  Force shutdown after timeout');
-      process.exit(0);
-    }, 10000).unref();
-  } else {
-    process.exit(0);
-  }
-}
-
-// Handle shutdown signals
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGUSR2', () => shutdown('SIGUSR2')); // For nodemon restart
-
-// Global error handler
+// Global Error Handler (must be the last middleware)
 app.use((err, req, res, _next) => {
+  console.error('[Unhandled Error]', err.stack || err);
   try { errorReporter.report(err, req, { context: 'global-error' }); } catch {}
 
-  // Local development error logging
-  console.error('[Unhandled Error]', err.stack || err);
-
-  // Enhanced error response with validation details
   const response = {
     success: false,
     error: err.message || 'Internal Server Error',
     timestamp: new Date().toISOString()
   };
 
-  // Add validation details if available
   if (err.details && Array.isArray(err.details)) {
     response.details = err.details;
   }
 
-  // Add debug info in local development
-  if (err.stack) {
-    response.debug = {
-      stack: err.stack,
-      code: err.code
-    };
+  // Avoid leaking stack trace in production
+  if (process.env.NODE_ENV !== 'production' && err.stack) {
+    response.debug = { stack: err.stack, code: err.code };
   }
 
   res.status(err.status || 500).json(response);
 });
 
+
+// =================================================================
+// SECTION: PROCESS & SERVER LIFECYCLE
+// =================================================================
+
+// --- Process-wide Error Handlers ---
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err.message);
+  try { errorReporter.reportProcessError(err, 'uncaughtException'); } catch {}
+  // In a real production app, you might want to exit gracefully here
+  // process.exit(1);
+});
+
 process.on('unhandledRejection', (reason) => {
   const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error('❌ Unhandled Rejection:', err);
   try { errorReporter.reportProcessError(err, 'unhandledRejection'); } catch {}
 });
 
-process.on('uncaughtException', (err) => {
-  try { errorReporter.reportProcessError(err, 'uncaughtException'); } catch {}
-});
-
-// Create server instance for graceful shutdown
+// --- Server Startup ---
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log('\n🎉 Server Started Successfully!');
-  console.log('='.repeat(50));
-  console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Health Check: http://0.0.0.0:${PORT}/api/health`);
-  console.log(`🎯 CORS Origins: ${ALLOWED_ORIGINS.join(', ') || '(none)'}`);
-  console.log('='.repeat(50));
-  console.log('✨ Ready to serve requests!\n');
+    console.log('\n🎉 Server Started Successfully!');
+    console.log('='.repeat(50));
+    console.log(`🚀 Server is running on port ${PORT}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
+    console.log(`🎯 CORS Origins: ${ALLOWED_ORIGINS.join(', ')}`);
+    console.log('='.repeat(50));
+    console.log('✨ Ready to serve requests!\n');
 });
 
-// Export server for testing (if needed)
+// --- Graceful Shutdown ---
+function shutdown(signal) {
+  console.log(`\n🔄 [${signal}] Received. Shutting down gracefully...`);
+  server.close(() => {
+    console.log('✅ HTTP server closed.');
+    process.exit(0);
+  });
+
+  // Force shutdown after a timeout
+  setTimeout(() => {
+    console.error('⚠️ Could not close connections in time, forcing shutdown.');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// For testing purposes
 module.exports = { app, server };
