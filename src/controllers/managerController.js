@@ -149,6 +149,17 @@ class ManagerController {
     res.status(200).json({ success: true, message: 'การประกวดสิ้นสุดและประกาศผลสำเร็จ', data: result });
   });
 
+  // ----- Scoring Progress & Detail -----
+  getScoringProgress = asyncWrapper(async (req, res) => {
+    const data = await ManagerService.getScoringProgress(req.params.id, req.userId);
+    res.status(200).json({ success: true, data });
+  });
+
+  getScoresForSubmission = asyncWrapper(async (req, res) => {
+    const data = await ManagerService.getScoresForSubmission(req.params.id, req.userId);
+    res.status(200).json({ success: true, data });
+  });
+
   // ----- History & Results -----
   getContestHistory = asyncWrapper(async (req, res) => {
     const history = await ManagerService.getContestHistory(req.userId);

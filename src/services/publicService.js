@@ -108,6 +108,40 @@ class PublicService {
   }
 
   /**
+   * ผลการแข่งขันสำหรับสาธารณะ (แสดงเมื่อประกาศผลแล้วเท่านั้น)
+   */
+  async getContestResults(contestId) {
+    // ตรวจสถานะก่อน
+    const { data: contest, error: cErr } = await supabase
+      .from('contests')
+      .select('id, name, status')
+      .eq('id', contestId)
+      .single();
+    if (cErr || !contest) throw new Error('ไม่พบข้อมูลการประกวด');
+    if (contest.status !== 'ประกาศผล') {
+      // ยังไม่ประกาศ: คืนว่าง ๆ เพื่อไม่เผยแพร่ก่อนเวลา
+      return { contest: { id: contest.id, name: contest.name, status: contest.status }, results: [] };
+    }
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('id, fish_name, final_score, owner:profiles(id, first_name, last_name)')
+      .eq('contest_id', contestId)
+      .eq('status', 'approved')
+      .not('final_score', 'is', null)
+      .order('final_score', { ascending: false });
+    if (error) throw new Error(`ดึงผลการแข่งขันล้มเหลว: ${error.message}`);
+
+    const results = (data || []).map((row, idx) => ({
+      submission_id: row.id,
+      rank: idx + 1,
+      fish_name: row.fish_name,
+      final_score: Number(row.final_score),
+      owner_name: `${row.owner?.first_name || ''} ${row.owner?.last_name || ''}`.trim(),
+    }));
+    return { contest: { id: contest.id, name: contest.name, status: contest.status }, results };
+  }
+
+  /**
    * ดึงรายการประกวดที่กำลังเปิดรับสมัคร (สำหรับฟอร์มส่งประกวด)
    * @returns {Promise<Array>}
    */

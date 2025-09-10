@@ -182,21 +182,26 @@ class ExpertController {
     const { contestId } = req.params;
     const expertId = req.userId;
 
-    // ส่วนนี้จะเรียก Service เพื่อดึงข้อมูลปลาจริงๆ ต่อไป (ซึ่งอาจต้องสร้างในอนาคต)
-    // const submissions = await ExpertService.getSubmissionsForJudging(contestId, expertId);
-    console.log(`Fetching submissions for contest ${contestId} by expert ${expertId}`);
-    
-    // ส่งข้อมูลจำลอง (mock data) กลับไปก่อน เพื่อให้เซิร์ฟเวอร์สตาร์ทได้
-    const mockSubmissions = [
-      { id: 'sub_mock_1', betta_name: 'ปลาตัวอย่าง 1' },
-      { id: 'sub_mock_2', betta_name: 'ปลาตัวอย่าง 2' },
-    ];
-    
-    res.status(200).json({
-      success: true,
-      message: `Successfully fetched submissions for contest ${contestId}`,
-      data: mockSubmissions
-    });
+    try {
+      const submissions = await ExpertService.getFishInContest(contestId, expertId);
+      res.status(200).json({ success: true, data: submissions });
+    } catch (err) {
+      if (typeof err?.message === 'string' && (err.message.includes('ไม่มีสิทธิ์') || err.message.includes('ยังไม่เปิดการตัดสิน'))) {
+        err.status = 403;
+      }
+      throw err;
+    }
+  });
+
+  /**
+   * ส่งคะแนนปลากัดในการแข่งขัน
+   * Route: POST /api/experts/judging/submissions/:submissionId/score
+   */
+  submitCompetitionScore = asyncWrapper(async (req, res) => {
+    const { submissionId } = req.params;
+    const expertId = req.userId;
+    const result = await ExpertService.submitCompetitionScore(submissionId, expertId, req.body || {});
+    res.json({ success: true, data: result });
   });
 
   /**

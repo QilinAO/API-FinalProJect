@@ -66,6 +66,16 @@ class PublicController {
     }
     res.status(200).json({ success: true, data });
   });
+
+  /**
+   * ผลการแข่งขันแบบสาธารณะ
+   * Route: GET /api/public/contests/:id/results
+   */
+  getContestResults = asyncWrapper(async (req, res) => {
+    const { id } = req.params;
+    const data = await PublicService.getContestResults(id);
+    res.status(200).json({ success: true, data });
+  });
 }
 
 module.exports = new PublicController();

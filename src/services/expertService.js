@@ -51,16 +51,32 @@ class ExpertService {
    * @returns {string} ชื่อเต็มของประเภทปลา
    */
   getFullFishTypeName(fishType) {
-    const typeMapping = {
+    const raw = (fishType || '').toString().trim();
+    const upper = raw.toUpperCase();
+
+    // รองรับทั้งโค้ด A-H, ชื่อไทย, และคำภาษาอังกฤษที่มักใช้
+    const codeMap = {
       'A': 'ปลากัดพื้นบ้านภาคใต้',
       'B': 'ปลากัดพื้นบ้านภาคอีสาน',
       'C': 'ปลากัดพื้นบ้านมหาชัย',
       'D': 'ปลากัดพื้นบ้านอีสานหางลาย',
       'E': 'ปลากัดพื้นบ้านภาคตะวันออก',
-      'F': 'ปลากัดพื้นบ้านภาคกลางและเหนือ'
+      'F': 'ปลากัดพื้นบ้านภาคกลางและเหนือ',
+      'G': 'ปลากัดสายพัฒนา',
+      'H': 'ปลากัดสายพัฒนา',
     };
-    
-    return typeMapping[fishType] || fishType;
+
+    if (codeMap[upper]) return codeMap[upper];
+
+    const lower = raw.toLowerCase();
+    if (lower.includes('south') || lower.includes('ภาคใต้')) return 'ปลากัดพื้นบ้านภาคใต้';
+    if (lower.includes('isaan') || lower.includes('อีสาน')) return 'ปลากัดพื้นบ้านภาคอีสาน';
+    if (lower.includes('mahachai') || lower.includes('มหาชัย')) return 'ปลากัดพื้นบ้านมหาชัย';
+    if (lower.includes('east') || lower.includes('ตะวันออก')) return 'ปลากัดพื้นบ้านภาคตะวันออก';
+    if (lower.includes('central') || lower.includes('เหนือ') || lower.includes('กลาง')) return 'ปลากัดพื้นบ้านภาคกลางและเหนือ';
+    if (lower.includes('develop') || lower.includes('สายพัฒนา')) return 'ปลากัดสายพัฒนา';
+
+    return raw; // ส่งกลับค่าดั้งเดิม ถ้าจำแนกไม่ได้
   }
 
   /**
@@ -208,12 +224,49 @@ class ExpertService {
    * @param {string} expertId - UUID ของผู้เชี่ยวชาญ
    */
   async getFishInContest(contestId, expertId) {
-    const { count, error: checkError } = await supabase.from('contest_judges').select('*', { count: 'exact', head: true }).match({ contest_id: contestId, judge_id: expertId, status: 'accepted' });
+    // ใช้ admin client เพื่อหลีกเลี่ยงปัญหา RLS บนฝั่งเซิร์ฟเวอร์
+    const { count, error: checkError } = await supabaseAdmin
+      .from('contest_judges')
+      .select('*', { count: 'exact', head: true })
+      .match({ contest_id: contestId, judge_id: expertId, status: 'accepted' });
     if (checkError || count === 0) throw new Error('คุณไม่มีสิทธิ์ดูรายชื่อผู้สมัครในการประกวดนี้');
 
-    const { data, error } = await supabase.from('submissions').select(`*, owner:profiles(first_name, last_name)`).eq('contest_id', contestId).eq('status', 'approved');
+    // อนุญาตให้เห็นรายชื่อ/ให้คะแนน เฉพาะเมื่อการประกวดอยู่ในสถานะ "ตัดสิน"
+    const { data: contest, error: cErr } = await supabaseAdmin
+      .from('contests')
+      .select('id, status')
+      .eq('id', contestId)
+      .single();
+    if (cErr || !contest) throw new Error('ไม่พบข้อมูลการประกวด');
+    if (contest.status !== 'ตัดสิน') {
+      const e = new Error('ยังไม่เปิดการตัดสิน กรรมการสามารถตอบรับได้เท่านั้น');
+      e.status = 403;
+      throw e;
+    }
+
+    // ดึงรายชื่อปลาที่อนุมัติในประกวดนี้ก่อน
+    const { data, error } = await supabaseAdmin
+      .from('submissions')
+      .select(`*, owner:profiles(first_name, last_name)`) 
+      .eq('contest_id', contestId)
+      .eq('status', 'approved');
     if (error) throw new Error(`ไม่สามารถดึงรายชื่อปลาได้: ${error.message}`);
-    return data;
+
+    const list = data || [];
+    if (list.length === 0) return [];
+
+    // หารายการที่ผู้เชี่ยวชาญรายนี้ "ให้คะแนนแล้ว" โดยอ้างอิงจาก submission_id ที่อยู่ในรายการข้างต้น
+    const subIds = list.map(s => s.id);
+    const { data: evaluatedList, error: evalErr } = await supabaseAdmin
+      .from('assignments')
+      .select('submission_id')
+      .eq('evaluator_id', expertId)
+      .eq('status', 'evaluated')
+      .in('submission_id', subIds);
+    if (evalErr) throw new Error(`ตรวจสอบสถานะการให้คะแนนล้มเหลว: ${evalErr.message}`);
+    const evaluatedSet = new Set((evaluatedList || []).map(r => r.submission_id));
+
+    return list.filter(item => !evaluatedSet.has(item.id));
   }
 
   /**
@@ -223,14 +276,61 @@ class ExpertService {
    * @param {object} scoresData - ข้อมูลคะแนน { scores, totalScore }
    */
   async submitCompetitionScore(submissionId, expertId, scoresData) {
-    const { error } = await supabaseAdmin.from('assignments').update({ 
-      scores: scoresData.scores, 
-      total_score: scoresData.totalScore, 
-      status: 'evaluated', 
-      evaluated_at: new Date().toISOString() 
-    }).match({ submission_id: submissionId, evaluator_id: expertId });
-    
-    if (error) throw new Error(`เกิดข้อผิดพลาดในการส่งคะแนน: ${error.message}`);
+    // ป้องกันการให้คะแนนหากยังไม่เข้าสถานะ "ตัดสิน"
+    const { data: subRow, error: sErr } = await supabaseAdmin
+      .from('submissions')
+      .select('id, contest_id')
+      .eq('id', submissionId)
+      .single();
+    if (sErr || !subRow) throw new Error('ไม่พบข้อมูลผลงานที่ต้องการให้คะแนน');
+    const { data: contest, error: cErr } = await supabaseAdmin
+      .from('contests')
+      .select('id, status')
+      .eq('id', subRow.contest_id)
+      .single();
+    if (cErr || !contest) throw new Error('ไม่พบข้อมูลการประกวด');
+    if (contest.status !== 'ตัดสิน') {
+      const e = new Error('ยังไม่เปิดการตัดสิน ไม่สามารถให้คะแนนได้');
+      e.status = 403;
+      throw e;
+    }
+
+    // ตรวจว่ามี assignment เดิมหรือไม่ ถ้าไม่มีให้สร้างใหม่ เพื่อรองรับการแข่งขันที่ไม่ได้สร้าง assignments ล่วงหน้า
+    const { data: existing, error: findErr } = await supabaseAdmin
+      .from('assignments')
+      .select('id')
+      .eq('submission_id', submissionId)
+      .eq('evaluator_id', expertId)
+      .limit(1)
+      .maybeSingle();
+
+    const payload = {
+      scores: scoresData.scores || {},
+      total_score: scoresData.totalScore ?? null,
+      status: 'evaluated',
+      evaluated_at: new Date().toISOString(),
+    };
+
+    if (findErr) throw new Error(`ตรวจสอบงานเดิมล้มเหลว: ${findErr.message}`);
+
+    if (existing?.id) {
+      const { error } = await supabaseAdmin
+        .from('assignments')
+        .update(payload)
+        .eq('id', existing.id);
+      if (error) throw new Error(`เกิดข้อผิดพลาดในการส่งคะแนน: ${error.message}`);
+    } else {
+      const insertRow = {
+        submission_id: submissionId,
+        evaluator_id: expertId,
+        ...payload,
+        assigned_at: new Date().toISOString(),
+      };
+      const { error } = await supabaseAdmin
+        .from('assignments')
+        .insert(insertRow);
+      if (error) throw new Error(`เกิดข้อผิดพลาดในการบันทึกคะแนน: ${error.message}`);
+    }
     return { success: true };
   }
 
@@ -264,9 +364,9 @@ class ExpertService {
    */
   async getScoringSchema(bettaType) {
     const scoringSchemas = require('../config/scoringSchemas');
-    
+
     const fullTypeName = this.getFullFishTypeName(bettaType);
-    
+
     const schema = scoringSchemas[fullTypeName] || scoringSchemas['default'];
     if (!schema) {
       throw new Error('ไม่พบเกณฑ์การให้คะแนนสำหรับประเภทปลานี้');

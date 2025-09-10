@@ -189,6 +189,85 @@ class ManagerService {
     return data;
   }
 
+  /**
+   * Progress การให้คะแนนของกรรมการแบบ real-time ต่อการประกวด
+   * - ตรวจสิทธิ์ผู้จัดการเจ้าของการประกวด
+   * - คืนจำนวนกรรมการที่ตอบรับทั้งหมด (judges_total)
+   * - คืนรายการผู้สมัครแต่ละตัว พร้อมจำนวนที่ประเมินแล้ว/เฉลี่ยคะแนนชั่วคราว
+   */
+  async getScoringProgress(contestId, managerId) {
+    if (!(await this.#isContestOwner(contestId, managerId))) throw new Error('ไม่ได้รับอนุญาต');
+
+    // กรรมการที่ตอบรับ
+    const { data: judges, error: jErr } = await supabase
+      .from('contest_judges')
+      .select('judge_id, status')
+      .match({ contest_id: contestId, status: 'accepted' });
+    if (jErr) throw new Error(`ดึงรายชื่อกรรมการล้มเหลว: ${jErr.message}`);
+    const judgesTotal = (judges || []).length;
+
+    // ผู้สมัครที่ได้รับอนุมัติ
+    const { data: subs, error: sErr } = await supabase
+      .from('submissions')
+      .select('id, fish_name, owner:profiles(first_name, last_name)')
+      .eq('contest_id', contestId)
+      .eq('status', 'approved');
+    if (sErr) throw new Error(`ดึงรายชื่อผู้สมัครล้มเหลว: ${sErr.message}`);
+    const subIds = (subs || []).map(s => s.id);
+    if (subIds.length === 0) return { judges_total: judgesTotal, submissions: [] };
+
+    // คะแนนที่ถูกกรอกแล้วจาก assignments
+    const { data: assigns, error: aErr } = await supabase
+      .from('assignments')
+      .select('submission_id, evaluator_id, total_score, status')
+      .in('submission_id', subIds);
+    if (aErr) throw new Error(`ดึงคะแนนจากกรรมการล้มเหลว: ${aErr.message}`);
+
+    const bySubmission = new Map();
+    subIds.forEach(id => bySubmission.set(id, []));
+    (assigns || []).forEach(a => {
+      if (bySubmission.has(a.submission_id)) bySubmission.get(a.submission_id).push(a);
+    });
+
+    const items = (subs || []).map(s => {
+      const list = bySubmission.get(s.id) || [];
+      const evaluated = list.filter(x => x.status === 'evaluated' && Number.isFinite(Number(x.total_score)));
+      const avg = evaluated.length
+        ? Math.round((evaluated.reduce((sum, x) => sum + Number(x.total_score), 0) / evaluated.length) * 100) / 100
+        : null;
+      return {
+        submission_id: s.id,
+        fish_name: s.fish_name,
+        owner_name: `${s.owner?.first_name || ''} ${s.owner?.last_name || ''}`.trim(),
+        evaluated_count: evaluated.length,
+        judges_total: judgesTotal,
+        average_score: avg,
+      };
+    });
+
+    return { judges_total: judgesTotal, submissions: items };
+  }
+
+  /**
+   * รายละเอียดคะแนนของผู้สมัครรายตัว (สำหรับ Manager ดูแต่ละผลงาน)
+   */
+  async getScoresForSubmission(submissionId, managerId) {
+    const { data: sub, error: sErr } = await supabase
+      .from('submissions')
+      .select('id, contest_id')
+      .eq('id', submissionId)
+      .single();
+    if (sErr || !sub) throw new Error('ไม่พบข้อมูลผู้สมัคร');
+    if (!(await this.#isContestOwner(sub.contest_id, managerId))) throw new Error('ไม่ได้รับอนุญาต');
+
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('evaluator_id, total_score, status, evaluated_at, evaluator:profiles(id, first_name, last_name)')
+      .eq('submission_id', submissionId);
+    if (error) throw new Error(`ดึงคะแนนล้มเหลว: ${error.message}`);
+    return data || [];
+  }
+
   async updateContestStatus(contestId, managerId, newStatus) {
     if (!(await this.#isContestOwner(contestId, managerId))) throw new Error('ไม่ได้รับอนุญาต');
     const { data: current } = await supabase.from('contests').select('category').eq('id', contestId).single();

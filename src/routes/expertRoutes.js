@@ -44,6 +44,8 @@ router.get('/judging', expertController.getJudgingContests); // Alias for fronte
 // ======================= บรรทัดนี้จะทำงานได้อย่างถูกต้องแล้ว =======================
 // ดึงข้อมูลปลาทั้งหมดที่ต้องตัดสินในการแข่งขันนั้นๆ
 router.get('/judging/:contestId/submissions', expertController.getSubmissionsForJudging);
+// ส่งคะแนนการแข่งขันต่อรายการ submission
+router.post('/judging/submissions/:submissionId/score', expertController.submitCompetitionScore);
 // =================================================================
 
 router.post('/contests/:contestId/accept', expertController.acceptJudging);

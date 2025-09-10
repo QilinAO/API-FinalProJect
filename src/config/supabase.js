@@ -31,10 +31,42 @@ if (missing.length) {
   console.error('⚠️  API will start in limited mode without database connection');
   console.error('🔧 Please check Railway Environment Variables');
   
-  // Create dummy clients instead of crashing
+  // Create robust dummy clients instead of crashing (chain-safe)
+  const makeDummyQuery = () => {
+    const result = {
+      // query builders
+      select: () => result,
+      eq: () => result,
+      ilike: () => result,
+      match: () => result,
+      in: () => result,
+      is: () => result,
+      order: () => result,
+      limit: () => result,
+      range: () => result,
+      // execution methods
+      single: async () => ({ data: null, error: { message: 'Database not configured' } }),
+      maybeSingle: async () => ({ data: null, error: { message: 'Database not configured' } }),
+      // select without single
+      then: undefined, // ensure not treated as a promise prematurely
+      // head+count style (emulate shape with count)
+      // Using a function returning an object with count to prevent runtime errors
+      // Callers often do: const { count } = await ...select('*', { count: 'exact', head: true })
+    };
+    // provide a callable to simulate the head/count call path
+    result.execute = async () => ({ data: [], count: 0, error: { message: 'Database not configured' } });
+    return result;
+  };
+
   const dummyClient = {
-    auth: { signIn: () => Promise.resolve({ error: { message: 'Database not configured' } }) },
-    from: () => ({ select: () => ({ error: { message: 'Database not configured' } }) }),
+    auth: {
+      getUser: async () => ({ data: { user: null }, error: { message: 'Auth not configured' } }),
+      signIn: async () => ({ data: null, error: { message: 'Auth not configured' } }),
+      admin: {
+        getUserById: async () => ({ data: { user: null }, error: { message: 'Auth not configured' } })
+      }
+    },
+    from: () => makeDummyQuery(),
     storage: { from: () => ({ getPublicUrl: () => ({ data: { publicUrl: '' } }) }) }
   };
   

@@ -27,6 +27,9 @@ router.get('/contests/:id/submissions', managerController.getSubmissionsForConte
 router.put('/submissions/:id/status', managerController.updateSubmissionStatus);
 router.put('/contests/:id/status', managerController.updateContestStatus);
 router.post('/contests/:id/finalize', managerController.finalizeContest);
+// Scoring progress and per-submission scores
+router.get('/contests/:id/scoring-progress', managerController.getScoringProgress);
+router.get('/submissions/:id/scores', managerController.getScoresForSubmission);
 
 // Approve / Reject contest submissions
 router.post('/contests/:contestId/submissions/:submissionId/approve', managerController.approveContestSubmission);

@@ -23,4 +23,7 @@ router.get('/content/all', publicController.getAllContent);
 // เส้นทางสำหรับดึงข้อมูล Content ชิ้นเดียวตาม ID (ต้องอยู่ล่างสุดเสมอ)
 router.get('/content/:id', publicController.getContentById);
 
+// Public contest results (visible after finalized)
+router.get('/contests/:id/results', publicController.getContestResults);
+
 module.exports = router;
