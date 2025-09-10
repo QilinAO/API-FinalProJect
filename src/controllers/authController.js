@@ -42,10 +42,37 @@ class AuthController {
    * Route: POST /api/auth/signin
    */
   signIn = asyncWrapper(async (req, res) => {
-    const { email, password } = req.body;
-    const { token, profile } = await AuthService.signIn(email, password);
+    const { email, identifier, password } = req.body;
+    let loginEmail = (email || identifier || '').toString().trim();
 
-    // ส่งการแจ้งเตือน (Fire-and-forget)
+    if (!loginEmail || !password) {
+      return res.status(400).json({ success: false, error: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
+    }
+
+    if (!loginEmail.includes('@')) {
+      const { supabase, supabaseAdmin } = require('../config/supabase');
+      const username = loginEmail.toLowerCase();
+      const { data: profileRow, error: findErr } = await supabase
+        .from('profiles')
+        .select('id, email, username')
+        .ilike('username', username)
+        .single();
+      if (findErr || !profileRow?.id) {
+        return res.status(400).json({ success: false, error: 'ไม่พบผู้ใช้ตามชื่อผู้ใช้ที่ระบุ' });
+      }
+      if (profileRow.email) {
+        loginEmail = profileRow.email;
+      } else {
+        const { data: userRes, error: adminErr } = await supabaseAdmin.auth.admin.getUserById(profileRow.id);
+        if (adminErr || !userRes?.user?.email) {
+          return res.status(400).json({ success: false, error: 'ไม่สามารถดึงอีเมลของผู้ใช้ได้' });
+        }
+        loginEmail = userRes.user.email;
+      }
+    }
+
+    const { token, profile } = await AuthService.signIn(loginEmail, password);
+
     if (profile) {
       checklistNotifier.onUserSignIn(profile.id).catch(err => 
         console.warn('[ChecklistNotifier] SignIn notification failed:', err.message)

@@ -1,5 +1,5 @@
 // ======================================================================
-// File: src/services/expertService.js
+// File: src/services/expertService.js (ฉบับสมบูรณ์ แก้ไขแล้ว)
 // หน้าที่: จัดการ Logic การทำงานทั้งหมดที่เกี่ยวข้องกับผู้เชี่ยวชาญ (Expert)
 // ======================================================================
 
@@ -132,17 +132,38 @@ class ExpertService {
    * @param {string} expertId - UUID ของผู้เชี่ยวชาญ
    */
   async getJudgingContests(expertId) {
+    // ############ START: โค้ดที่แก้ไข ############
     const [invitesRes, contestsRes] = await Promise.all([
-      supabase.from('contest_judges').select(`status, contest:contests!inner(id, name, start_date, end_date)`).eq('judge_id', expertId).eq('status', 'pending'),
-      supabase.from('contest_judges').select(`status, contest:contests!inner(id, name, start_date, end_date, status)`).eq('judge_id', expertId).eq('status', 'accepted').in('contest.status', ['กำลังดำเนินการ', 'ตัดสิน'])
+      // ดึงคำเชิญที่ยังรอดำเนินการ (pending)
+      supabaseAdmin
+        .from('contests')
+        .select(`
+          *,
+          contest_judges!inner(status)
+        `)
+        .eq('contest_judges.judge_id', expertId)
+        .eq('contest_judges.status', 'pending'),
+      
+      // ดึงการแข่งขันที่ตอบรับแล้ว (accepted) และกำลังดำเนินการอยู่
+      supabaseAdmin
+        .from('contests')
+        .select(`
+          *,
+          contest_judges!inner(status)
+        `)
+        .eq('contest_judges.judge_id', expertId)
+        .eq('contest_judges.status', 'accepted')
+        .in('status', ['กำลังดำเนินการ', 'ตัดสิน'])
     ]);
+    // ############ END: โค้ดที่แก้ไข ############
 
     if (invitesRes.error) throw new Error(`ดึงคำเชิญไม่สำเร็จ: ${invitesRes.error.message}`);
     if (contestsRes.error) throw new Error(`ดึงรายการประกวดไม่สำเร็จ: ${contestsRes.error.message}`);
 
+    // Map ข้อมูลให้มีโครงสร้างเหมือนเดิมที่ Frontend ต้องการ
     return {
-      invitations: (invitesRes.data || []).map(i => ({ ...i.contest, expert_status: i.status })),
-      myContests: (contestsRes.data || []).map(c => ({ ...c.contest, expert_status: c.status })),
+      invitations: (invitesRes.data || []).map(i => ({ ...i, expert_status: i.contest_judges[0]?.status })),
+      myContests: (contestsRes.data || []).map(c => ({ ...c, expert_status: c.contest_judges[0]?.status })),
     };
   }
 

@@ -9,11 +9,19 @@ let Client = null;
 
 class ModelApiService {
   constructor() {
-    this.timeout = 60000; // 60 วินาที (Gradio ใช้เวลานาน)
+    this.timeout = 60000; // 60 วินาที (Gradio อาจใช้เวลานาน)
     this.huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN;
-    this.spaceId = process.env.HUGGINGFACE_SPACE_ID || 'QilinAO/betta-ts-space'; // Space ID ไม่ใช่ model name
-    this.spaceUrl = process.env.HUGGINGFACE_SPACE_URL || 'https://qilinao-betta-ts-space.hf.space';
-    this.useGradioAPI = process.env.USE_GRADIO_API === 'true' || true; // ค่าเริ่มต้นใช้ Gradio
+    this.spaceId = process.env.HUGGINGFACE_SPACE_ID || 'QilinAO/betta-ts-space';
+    
+    // ############ START: โค้ดที่แก้ไข ############
+    // แก้ไข URL ให้ถูกต้องและตัดช่องว่างที่อาจติดมากับ Environment Variable
+    this.spaceUrl = (process.env.HUGGINGFACE_SPACE_URL || 'https://qilinao-betta-ts-space.hf.space').trim(); 
+    // ############ END: โค้ดที่แก้ไข ############
+    
+    // 尊重环境变量：仅当显式为 'true' 时启用 Gradio；默认 false，避免本地误连外网
+    this.useGradioAPI = process.env.USE_GRADIO_API === 'true';
+    // 离线/本地短路标志：开启后不访问任何外部网络
+    this.offlineMode = String(process.env.OFFLINE_AUTH || '').toLowerCase() === 'true';
     
     // URLs สำหรับ API ต่างๆ
     this.inferenceURL = 'https://api-inference.huggingface.co/models';
@@ -33,8 +41,10 @@ class ModelApiService {
     console.log(`🤖 Model Configuration:`);
     console.log(`   📍 Space ID: ${this.spaceId}`);
     console.log(`   🌐 Space URL: ${this.spaceUrl}`);
-    console.log(`   🔧 API Type: ${this.useGradioAPI ? 'Gradio Space' : 'Inference'}`);
-    console.log(`Using ${this.useGradioAPI ? 'Gradio Space' : 'Inference'} API for Space: ${this.spaceId}`);
+    console.log(`   🔧 API Type: ${this.useGradioAPI ? 'Gradio Space' : 'Inference/Disabled'}`);
+    if (this.offlineMode) {
+      console.log('🛠️  OFFLINE_AUTH enabled: Model API calls will be mocked locally');
+    }
   }
 
   /**
@@ -48,9 +58,30 @@ class ModelApiService {
   }
 
   /**
+   * 返回本地离线的模拟结果（不访问网络）
+   */
+  buildOfflineMockResult() {
+    // 返回一个低置信度、提示“其它/不确定”的结果，结构与前端预期一致
+    const formattedData = {
+      top1: { prob: 0.0 },
+      final_label: {
+        code: 'OTHER',
+        name: 'อื่นๆ / ไม่แน่ใจ',
+        reason: 'OFFLINE 模式：未调用外部模型，无法确定类型'
+      },
+      is_confident: false,
+      topk: []
+    };
+    return { success: true, data: formattedData };
+  }
+
+  /**
    * ดึงสเปกของ Space และหา predict endpoint
    */
   async getSpaceSpec() {
+    if (this.offlineMode) {
+      throw new Error('Offline mode - no Space spec');
+    }
     if (this.spaceSpec) {
       return this.spaceSpec; // ใช้ cache
     }
@@ -112,12 +143,11 @@ class ModelApiService {
    */
   async checkModelStatus() {
     try {
+      if (this.offlineMode) return false;
       if (this.useGradioAPI) {
-        // ตรวจสอบ Space
         const response = await axios.get(this.spaceUrl, { timeout: 10000 });
         return response.status === 200;
       } else {
-        // ตรวจสอบ Inference API
         const response = await axios.get(`${this.inferenceURL}/${this.spaceId}`, {
           headers: this.getHeaders(),
           timeout: 5000
@@ -137,6 +167,9 @@ class ModelApiService {
    * @returns {Promise<Object>} ผลการตรวจสอบ
    */
   async predictBettaType(imageBuffer, threshold = 0.90) {
+    if (this.offlineMode) {
+      return this.buildOfflineMockResult();
+    }
     if (this.useGradioAPI) {
       return await this.predictWithGradio(imageBuffer, threshold);
     } else {
@@ -149,6 +182,9 @@ class ModelApiService {
    */
   async predictWithGradio(imageBuffer, threshold = 0.90) {
     try {
+      if (this.offlineMode) {
+        return this.buildOfflineMockResult();
+      }
       // ดึงสเปกของ Space ก่อน
       const spec = await this.getSpaceSpec();
       
@@ -175,7 +211,7 @@ class ModelApiService {
       console.log('✅ ได้รับผลลัพธ์จาก Gradio Space');
       
       // แปลงผลลัพธ์
-      return this.formatGradioClientResult(result.data);
+      return this.formatGradioClientResult(result.data, threshold);
       
     } catch (error) {
       console.error('Gradio Client Error:', error.message);
@@ -191,6 +227,9 @@ class ModelApiService {
    */
   async predictWithGradioAxios(imageBuffer, threshold = 0.90) {
     try {
+      if (this.offlineMode) {
+        return this.buildOfflineMockResult();
+      }
       // แปลง Buffer เป็ง base64
       const base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
       
@@ -225,7 +264,7 @@ class ModelApiService {
       });
 
       // ประมวลผล event stream response
-      const result = await this.processGradioResponse(response.data);
+      const result = await this.processGradioResponse(response.data, threshold);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to get prediction from Gradio');
@@ -247,12 +286,15 @@ class ModelApiService {
    */
   async predictWithInference(imageBuffer, threshold = 0.90) {
     try {
+      if (this.offlineMode) {
+        return this.buildOfflineMockResult();
+      }
       if (!this.huggingFaceToken) {
         throw new Error('HuggingFace API token is required');
       }
 
       const response = await axios.post(
-        `${this.inferenceURL}/${this.modelName}`,
+        `${this.inferenceURL}/${this.spaceId}`, // ใช้ this.spaceId เนื่องจาก modelName อาจไม่มีหรือมีค่าเดียวกัน
         imageBuffer,
         {
           headers: {
@@ -269,7 +311,7 @@ class ModelApiService {
         throw new Error('Invalid response from HuggingFace model');
       }
 
-      return this.formatPredictionResult(predictions);
+      return this.formatPredictionResult(predictions, threshold);
       
     } catch (error) {
       console.error('HuggingFace Inference API Error:', error.message);
@@ -283,7 +325,7 @@ class ModelApiService {
   /**
    * ประมวลผล Gradio response
    */
-  async processGradioResponse(responseData) {
+  async processGradioResponse(responseData, threshold = 0.90) {
     try {
       if (typeof responseData === 'string') {
         const lines = responseData.split('\n');
@@ -292,7 +334,7 @@ class ModelApiService {
             try {
               const data = JSON.parse(line.substring(6));
               if (data.msg === 'process_completed' && data.output?.data) {
-                return this.formatGradioResult(data.output.data);
+                return this.formatGradioResult(data.output.data, threshold);
               }
             } catch (e) {
               continue;
@@ -313,7 +355,7 @@ class ModelApiService {
   /**
    * แปลงผลลัพธ์จาก @gradio/client ให้ตรงกับรูปแบบที่ Frontend คาดหวัง
    */
-  formatGradioClientResult(clientData) {
+  formatGradioClientResult(clientData, threshold = 0.90) {
     try {
       console.log('🔍 กำลังแปลงผลลัพธ์จาก Gradio Client:', JSON.stringify(clientData, null, 2));
       
@@ -329,7 +371,7 @@ class ModelApiService {
           
           const bettaInfo = this.getBettaTypeInfo(topEntry[0]);
           const confidence = topEntry[1];
-          const isConfident = confidence >= 0.8; // threshold สำหรับความมั่นใจ
+          const isConfident = confidence >= threshold; // ใช้ threshold จากพารามิเตอร์
           
           // รูปแบบที่ Frontend คาดหวัง
           const formattedData = {
@@ -383,7 +425,7 @@ class ModelApiService {
   /**
    * แปลงผลลัพธ์จาก Gradio (axios fallback)
    */
-  formatGradioResult(gradioData) {
+  formatGradioResult(gradioData, threshold = 0.90) {
     try {
       if (Array.isArray(gradioData) && gradioData.length >= 2) {
         const prediction = gradioData[0]; // ผลทำนาย
@@ -394,17 +436,20 @@ class ModelApiService {
           const topEntry = Object.entries(probabilities).reduce((a, b) => 
             a[1] > b[1] ? a : b
           );
+          const confidence = topEntry[1];
+          const isConfident = confidence >= threshold;
           
           const formattedData = {
             final_label: {
               code: this.extractBettaTypeFromLabel(topEntry[0]),
-              confidence: topEntry[1],
+              confidence: confidence,
               label: topEntry[0]
             },
             top1: {
-              prob: topEntry[1],
+              prob: confidence,
               label: topEntry[0]
             },
+            is_confident: isConfident,
             predictions: Object.entries(probabilities).map(([label, score]) => ({
               label,
               score,
@@ -431,10 +476,12 @@ class ModelApiService {
   /**
    * แปลงผลลัพธ์จาก Inference API
    */
-  formatPredictionResult(predictions) {
+  formatPredictionResult(predictions, threshold = 0.90) {
     const topPrediction = predictions.reduce((prev, current) => 
       (prev.score > current.score) ? prev : current
     );
+
+    const isConfident = (topPrediction?.score || 0) >= threshold;
 
     const formattedData = {
       final_label: {
@@ -446,6 +493,7 @@ class ModelApiService {
         prob: topPrediction.score,
         label: topPrediction.label
       },
+      is_confident: isConfident,
       predictions: predictions.slice(0, 3).map(pred => ({
         label: pred.label,
         score: pred.score,
@@ -604,6 +652,7 @@ class ModelApiService {
    */
   async isModelReady() {
     try {
+      if (this.offlineMode) return false;
       if (!this.huggingFaceToken) {
         return false;
       }
@@ -626,7 +675,7 @@ class ModelApiService {
 
       // HuggingFace ไม่มี endpoint สำหรับ taxonomy โดยตรง
       // เราจะ return ข้อมูล metadata พื้นฐาน
-      const modelInfo = await axios.get(`https://huggingface.co/api/models/${this.modelName}`, {
+      const modelInfo = await axios.get(`https://huggingface.co/api/models/${this.spaceId}`, { // ใช้ this.spaceId เนื่องจาก modelName อาจไม่มีหรือมีค่าเดียวกัน
         timeout: 5000
       });
 
@@ -634,7 +683,7 @@ class ModelApiService {
       const taxonomy = {
         classes: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'],
         model_info: {
-          name: this.modelName,
+          name: this.spaceId, // ใช้ this.spaceId เนื่องจาก modelName อาจไม่มีหรือมีค่าเดียวกัน
           pipeline_tag: modelInfo.data.pipeline_tag || 'image-classification',
           library_name: modelInfo.data.library_name || 'transformers'
         }

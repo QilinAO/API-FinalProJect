@@ -26,7 +26,7 @@ const parseOrigins = (s) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175,https://final-project-eel25bszb-anmingaos-projects.vercel.app,https://final-project-dkwm7i2uo-anmingaos-projects.vercel.app,https://final-project-mt9u2bm77-anmingaos-projects.vercel.app';
+const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000';
 const ALLOWED_ORIGINS = parseOrigins(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || DEFAULT_ORIGINS);
 
 // Configuration logging
@@ -139,6 +139,21 @@ const modelRoutes = require('./routes/modelRoutes');
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/manager', managerRoutes);
+// --- DEV stub for expert invitations/assignments (local only) ---
+if (process.env.OFFLINE_AUTH === 'true') {
+  const invitations = [
+    { id: 'inv_1', title: 'เชิญประเมินปลา A', status: 'pending', created_at: '2024-01-20T10:00:00Z' },
+    { id: 'inv_2', title: 'เชิญประเมินปลา B', status: 'pending', created_at: '2024-01-22T09:00:00Z' }
+  ];
+  const assignments = [
+    { id: 'job_1', title: 'งานประเมิน #1001', status: 'assigned', due_at: '2024-02-01T12:00:00Z' }
+  ];
+  // 支持多个路径：可用字符串数组，或正则写法需包含 /.../ 字面量
+  const INVITE_PATHS = ['/api/experts/invitations', '/api/experts/me/invitations'];
+  const ASSIGN_PATHS = ['/api/experts/assignments', '/api/experts/me/assignments'];
+  app.get(INVITE_PATHS, (req,res) => res.json(invitations));
+  app.get(ASSIGN_PATHS, (req,res) => res.json(assignments));
+}
 app.use('/api/experts', expertRoutes);
 app.use('/api/submissions', submissionRoutes);
 app.use('/api/public', publicRoutes);

@@ -44,13 +44,20 @@ const validateSignUp = (req, res, next) => {
 // Validation สำหรับการเข้าสู่ระบบ
 const validateSignIn = (req, res, next) => {
   const schema = Joi.object({
-    email: Joi.string().email().required().messages({
-      'string.email': 'กรุณากรอกอีเมลให้ถูกต้อง',
-      'any.required': 'กรุณากรอกอีเมล'
+    email: Joi.string().email().messages({
+      'string.email': 'กรุณากรอกอีเมลให้ถูกต้อง'
+    }),
+    identifier: Joi.string().min(3).messages({
+      'string.min': 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัวอักษร'
     }),
     password: Joi.string().required().messages({
       'any.required': 'กรุณากรอกรหัสผ่าน'
     })
+  })
+  // ต้องมีอย่างน้อยหนึ่งจาก email หรือ identifier
+  .or('email', 'identifier')
+  .messages({
+    'object.missing': 'กรุณากรอกอีเมลหรือชื่อผู้ใช้'
   });
 
   const { error } = schema.validate(req.body);

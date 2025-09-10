@@ -9,8 +9,7 @@
     "build": "echo 'No build step needed for Node.js API'",
     "test": "jest",
     "cron:assignments": "node cron-assignments.js",
-    "process:assignments": "node scripts/processAssignments.js",
-    "deploy:vercel": "vercel --prod"
+    "process:assignments": "node scripts/processAssignments.js"
   },
   "dependencies": {
     "@cloudinary/react": "^1.14.3",

@@ -26,7 +26,7 @@ class ManagerService {
         contest_judges (
           status,
           judge:profiles (
-            id, first_name, last_name
+            id, username, first_name, last_name
           )
         )
       `)
@@ -89,7 +89,8 @@ class ManagerService {
     if (!(await this.#isContestOwner(contestId, managerId))) {
       throw new Error('ไม่ได้รับอนุญาตให้แก้ไข');
     }
-    const allowedFields = ['name', 'short_description', 'full_description', 'poster_url', 'category', 'start_date', 'end_date', 'status', 'is_vote_open', 'allowed_subcategories', 'fish_type'];
+    // 移除 'fish_type' 以与前端一致，避免出现不必要的更新字段
+    const allowedFields = ['name', 'short_description', 'full_description', 'poster_url', 'category', 'start_date', 'end_date', 'status', 'is_vote_open', 'allowed_subcategories'];
     const dataToUpdate = {};
     for (const key of allowedFields) {
       if (updateData[key] !== undefined) {
@@ -114,7 +115,11 @@ class ManagerService {
 
   async getContestSubmissions(contestId, managerId) {
     if (!(await this.#isContestOwner(contestId, managerId))) throw new Error('ไม่ได้รับอนุญาตให้ดูผู้สมัคร');
-    const { data, error } = await supabase.from('submissions').select('*, owner:profiles(id, username, first_name, last_name)').eq('contest_id', contestId).order('submitted_at', { ascending: true });
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('*, owner:profiles(id, username, first_name, last_name), contest:contests(id, allowed_subcategories, fish_type)')
+      .eq('contest_id', contestId)
+      .order('submitted_at', { ascending: true });
     if (error) throw new Error(error.message);
     return data;
   }
