@@ -9,19 +9,33 @@ const scoringSchemas = require('../config/scoringSchemas');
 
 class ExpertService {
   /**
-   * ดึงข้อมูลสรุปสำหรับหน้า Dashboard ของ Expert
+   * ดึงข้อมูลสรุปสำหรับหน้า Dashboard ของ Expert (แก้ไขให้มีความเสถียรมากขึ้น)
    * @param {string} expertId - UUID ของผู้เชี่ยวชาญ
    */
+  // ############ START: โค้ดที่แก้ไข ############
   async getDashboardStats(expertId) {
-    const [
-      { count: pendingEvaluations },
-      { count: pendingInvitations },
-      { count: completedTasks }
-    ] = await Promise.all([
+    // ใช้ Promise.allSettled เพื่อป้องกันกรณีมี query ใด query หนึ่งล้มเหลว
+    const results = await Promise.allSettled([
       supabase.from('assignments').select('*', { count: 'exact', head: true }).eq('evaluator_id', expertId).eq('status', 'pending').is('submission.contest_id', null),
       supabase.from('contest_judges').select('*', { count: 'exact', head: true }).eq('judge_id', expertId).eq('status', 'pending'),
       supabase.from('assignments').select('*', { count: 'exact', head: true }).eq('evaluator_id', expertId).eq('status', 'evaluated')
     ]);
+
+    // ฟังก์ชันสำหรับดึงค่า count ออกมาจากผลลัพธ์อย่างปลอดภัย
+    const getCountFromResult = (result) => {
+      if (result.status === 'fulfilled' && result.value) {
+        return result.value.count;
+      }
+      // หาก query ล้มเหลว ให้ log error ไว้ และคืนค่าเป็น 0
+      if (result.status === 'rejected') {
+        console.error("Dashboard stat query failed:", result.reason?.message);
+      }
+      return 0;
+    };
+
+    const pendingEvaluations = getCountFromResult(results[0]);
+    const pendingInvitations = getCountFromResult(results[1]);
+    const completedTasks = getCountFromResult(results[2]);
 
     return {
       pendingEvaluations: pendingEvaluations || 0,
@@ -29,6 +43,7 @@ class ExpertService {
       completedTasks: completedTasks || 0,
     };
   }
+  // ############ END: โค้ดที่แก้ไข ############
 
   /**
    * แปลงชื่อประเภทปลาจากตัวย่อเป็นชื่อเต็ม
@@ -38,7 +53,7 @@ class ExpertService {
   getFullFishTypeName(fishType) {
     const typeMapping = {
       'A': 'ปลากัดพื้นบ้านภาคใต้',
-      'B': 'ปลากัดพื้นบ้านภาคอีสาน', 
+      'B': 'ปลากัดพื้นบ้านภาคอีสาน',
       'C': 'ปลากัดพื้นบ้านมหาชัย',
       'D': 'ปลากัดพื้นบ้านอีสานหางลาย',
       'E': 'ปลากัดพื้นบ้านภาคตะวันออก',
@@ -132,7 +147,6 @@ class ExpertService {
    * @param {string} expertId - UUID ของผู้เชี่ยวชาญ
    */
   async getJudgingContests(expertId) {
-    // ############ START: โค้ดที่แก้ไข ############
     const [invitesRes, contestsRes] = await Promise.all([
       // ดึงคำเชิญที่ยังรอดำเนินการ (pending)
       supabaseAdmin
@@ -155,7 +169,6 @@ class ExpertService {
         .eq('contest_judges.status', 'accepted')
         .in('status', ['กำลังดำเนินการ', 'ตัดสิน'])
     ]);
-    // ############ END: โค้ดที่แก้ไข ############
 
     if (invitesRes.error) throw new Error(`ดึงคำเชิญไม่สำเร็จ: ${invitesRes.error.message}`);
     if (contestsRes.error) throw new Error(`ดึงรายการประกวดไม่สำเร็จ: ${contestsRes.error.message}`);
@@ -252,7 +265,6 @@ class ExpertService {
   async getScoringSchema(bettaType) {
     const scoringSchemas = require('../config/scoringSchemas');
     
-    // แปลงตัวย่อเป็นชื่อเต็ม
     const fullTypeName = this.getFullFishTypeName(bettaType);
     
     const schema = scoringSchemas[fullTypeName] || scoringSchemas['default'];
