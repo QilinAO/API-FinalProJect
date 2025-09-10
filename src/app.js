@@ -19,32 +19,43 @@ app.use(
   })
 );
 
-// Parse origins from environment or use defaults
-const parseOrigins = (s) =>
-  (s || 'http://localhost:5173,http://localhost:5174,http://localhost:5175')
-    .split(',')
-    .map((x) => x.trim())
-    .filter(Boolean);
-
-const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:3000';
-const ALLOWED_ORIGINS = parseOrigins(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || DEFAULT_ORIGINS);
+// --- ADJUSTMENT FOR LOCAL DEVELOPMENT ---
+// Hardcode the allowed origins to only local addresses
+const ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175',
+    'http://localhost:3000'
+];
 
 // Configuration logging
-console.log('🚀 Railway Configuration:');
+console.log('🚀 Local Development Configuration:');
 console.log('📍 PORT:', process.env.PORT || 'Not set (will use 5000)');
 console.log('🌍 NODE_ENV:', process.env.NODE_ENV || 'development');
-console.log('🔗 FRONTEND_URLS:', process.env.FRONTEND_URLS);
-console.log('🎯 FRONTEND_URL:', process.env.FRONTEND_URL);
-console.log('🌐 ALLOWED_ORIGINS:', ALLOWED_ORIGINS);
-console.log('📡 Railway Environment:', process.env.RAILWAY_ENVIRONMENT || 'Not set');
+console.log('🌐 ALLOWED_ORIGINS (Local Only):', ALLOWED_ORIGINS);
+
 
 const corsOptions = {
-  origin: ALLOWED_ORIGINS,
+  // Use a function to dynamically check the origin
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like Postman, curl, or mobile apps)
+    if (!origin) return callback(null, true);
+    
+    // If the origin is in our allowed list, allow it
+    if (ALLOWED_ORIGINS.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      // Otherwise, disallow it
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-user-id'],
   optionsSuccessStatus: 200
 };
+// --- END OF ADJUSTMENT ---
+
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -52,7 +63,7 @@ app.options('*', cors(corsOptions));
 app.use((err, req, res, next) => {
   if (err && String(err.message || '').includes('not allowed by CORS')) {
     try { errorReporter.report(err, req, { context: 'CORS' }); } catch {}
-    return res.status(403).json({ success: false, error: err.message });
+    return res.status(403).json({ success: false, error: "CORS Error: " + err.message });
   }
   return next(err);
 });
@@ -65,46 +76,46 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Health check endpoints for Railway
 app.get('/health', (_req, res) => {
   try {
-    res.json({ 
-      success: true, 
-      status: 'OK', 
+    res.json({
+      success: true,
+      status: 'OK',
       service: 'betta-fish-api',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
       port: process.env.PORT || PORT
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Health check failed',
-      message: error.message 
+      message: error.message
     });
   }
 });
 
 app.get('/api/health', (_req, res) => {
   try {
-    res.json({ 
-      success: true, 
-      status: 'OK', 
+    res.json({
+      success: true,
+      status: 'OK',
       service: 'betta-fish-api',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
       port: process.env.PORT || PORT
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Health check failed',
-      message: error.message 
+      message: error.message
     });
   }
 });
 
 app.get('/', (_req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Betta Fish API is running', 
+  res.json({
+    success: true,
+    message: 'Betta Fish API is running',
     health: '/health',
     api: '/api/health',
     timestamp: new Date().toISOString()
@@ -188,14 +199,14 @@ process.on('unhandledRejection', (reason) => {
 function shutdown(signal) {
   console.log(`\n🔄 [${signal}] Shutting down gracefully...`);
   console.log('⏳ Closing HTTP server...');
-  
+
   if (server) {
     server.close(() => {
       console.log('✅ HTTP server closed successfully');
       console.log('👋 Goodbye!');
       process.exit(0);
     });
-    
+
     // Force shutdown after 10 seconds if server doesn't close gracefully
     setTimeout(() => {
       console.log('⚠️  Force shutdown after timeout');
@@ -214,7 +225,7 @@ process.on('SIGUSR2', () => shutdown('SIGUSR2')); // For nodemon restart
 // Global error handler
 app.use((err, req, res, _next) => {
   try { errorReporter.report(err, req, { context: 'global-error' }); } catch {}
-  
+
   // Local development error logging
   console.error('[Unhandled Error]', err.stack || err);
 
@@ -258,7 +269,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health Check: http://0.0.0.0:${PORT}/api/health`);
   console.log(`🎯 CORS Origins: ${ALLOWED_ORIGINS.join(', ') || '(none)'}`);
-  console.log(`📡 Railway Port: ${process.env.PORT || 'Not set'}`);
   console.log('='.repeat(50));
   console.log('✨ Ready to serve requests!\n');
 });
