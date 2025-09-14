@@ -42,8 +42,12 @@ class ManagerService {
 
   // ... (ฟังก์ชันอื่นๆ ทั้งหมดเหมือนเดิม) ...
   async #isContestOwner(contestId, managerId) {
-    const { count, error } = await supabase.from('contests').select('*', { count: 'exact', head: true }).match({ id: contestId, created_by: managerId });
-    if (error) throw new Error(error.message);
+    // Use admin client to bypass RLS; we enforce ownership manually
+    const { count, error } = await supabaseAdmin
+      .from('contests')
+      .select('*', { count: 'exact', head: true })
+      .match({ id: contestId, created_by: managerId });
+    if (error) throw Object.assign(new Error(error.message), { status: 500 });
     return (count || 0) > 0;
   }
 
@@ -173,10 +177,25 @@ class ManagerService {
   }
 
   async getContestHistory(managerId) {
-    const { data, error } = await supabase.from('contests').select('*, submissions(id, fish_name, final_score, owner:profiles(id, first_name, last_name))').eq('created_by', managerId).in('status', ['ประกาศผล', 'ยกเลิก']).order('end_date', { ascending: false });
+    const { data, error } = await supabaseAdmin
+      .from('contests')
+      .select('*, submissions(id, fish_name, final_score, owner:profiles(id, first_name, last_name), assignments(total_score))')
+      .eq('created_by', managerId)
+      .in('status', ['ประกาศผล', 'ยกเลิก'])
+      .order('end_date', { ascending: false });
     if (error) throw new Error(error.message);
     (data || []).forEach(c => {
       if (Array.isArray(c.submissions)) {
+        c.submissions = c.submissions.map(s => {
+          if ((s.final_score == null || Number.isNaN(Number(s.final_score))) && Array.isArray(s.assignments) && s.assignments.length > 0) {
+            const scores = s.assignments.map(a => Number(a.total_score)).filter(Number.isFinite);
+            if (scores.length > 0) {
+              const avg = scores.reduce((sum, v) => sum + v, 0) / scores.length;
+              return { ...s, final_score: Math.round(avg * 100) / 100 };
+            }
+          }
+          return s;
+        });
         c.submissions.sort((a, b) => (Number(b.final_score) || 0) - (Number(a.final_score) || 0));
       }
     });
@@ -184,7 +203,13 @@ class ManagerService {
   }
 
   async getAllResults(managerId) {
-    const { data, error } = await supabase.from('submissions').select('*, owner:profiles(id, first_name, last_name), contest:contests!inner(id, name, created_by)').eq('contest.created_by', managerId).eq('status', 'approved').not('final_score', 'is', null).order('final_score', { ascending: false });
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('*, owner:profiles(id, first_name, last_name), contest:contests!inner(id, name, start_date, end_date, created_by)')
+      .eq('contest.created_by', managerId)
+      .eq('status', 'approved')
+      .not('final_score', 'is', null)
+      .order('final_score', { ascending: false });
     if (error) throw new Error(error.message);
     return data;
   }
@@ -198,8 +223,8 @@ class ManagerService {
   async getScoringProgress(contestId, managerId) {
     if (!(await this.#isContestOwner(contestId, managerId))) throw new Error('ไม่ได้รับอนุญาต');
 
-    // กรรมการที่ตอบรับ
-    const { data: judges, error: jErr } = await supabase
+    // กรรมการที่ตอบรับ (ใช้ admin เพื่อเลี่ยง RLS)
+    const { data: judges, error: jErr } = await supabaseAdmin
       .from('contest_judges')
       .select('judge_id, status')
       .match({ contest_id: contestId, status: 'accepted' });
@@ -207,7 +232,7 @@ class ManagerService {
     const judgesTotal = (judges || []).length;
 
     // ผู้สมัครที่ได้รับอนุมัติ
-    const { data: subs, error: sErr } = await supabase
+    const { data: subs, error: sErr } = await supabaseAdmin
       .from('submissions')
       .select('id, fish_name, owner:profiles(first_name, last_name)')
       .eq('contest_id', contestId)
@@ -217,7 +242,7 @@ class ManagerService {
     if (subIds.length === 0) return { judges_total: judgesTotal, submissions: [] };
 
     // คะแนนที่ถูกกรอกแล้วจาก assignments
-    const { data: assigns, error: aErr } = await supabase
+    const { data: assigns, error: aErr } = await supabaseAdmin
       .from('assignments')
       .select('submission_id, evaluator_id, total_score, status')
       .in('submission_id', subIds);
@@ -228,6 +253,24 @@ class ManagerService {
     (assigns || []).forEach(a => {
       if (bySubmission.has(a.submission_id)) bySubmission.get(a.submission_id).push(a);
     });
+
+    // คำนวณจำนวนกรรมการที่ "ให้คะแนนครบทุกตัว" ในการแข่งขันนี้
+    let judgesCompleted = 0;
+    const judgeIds = (judges || []).map(j => j.judge_id);
+    if (judgeIds.length > 0) {
+      const byJudge = new Map();
+      (assigns || []).forEach(a => {
+        if (a.status === 'evaluated' && judgeIds.includes(a.evaluator_id)) {
+          const set = byJudge.get(a.evaluator_id) || new Set();
+          set.add(a.submission_id);
+          byJudge.set(a.evaluator_id, set);
+        }
+      });
+      judgeIds.forEach(jid => {
+        const set = byJudge.get(jid);
+        if (set && set.size === subIds.length) judgesCompleted += 1;
+      });
+    }
 
     const items = (subs || []).map(s => {
       const list = bySubmission.get(s.id) || [];
@@ -245,7 +288,7 @@ class ManagerService {
       };
     });
 
-    return { judges_total: judgesTotal, submissions: items };
+    return { judges_total: judgesTotal, judges_completed: judgesCompleted, submissions: items };
   }
 
   /**
@@ -269,22 +312,74 @@ class ManagerService {
   }
 
   async updateContestStatus(contestId, managerId, newStatus) {
-    if (!(await this.#isContestOwner(contestId, managerId))) throw new Error('ไม่ได้รับอนุญาต');
-    const { data: current } = await supabase.from('contests').select('category').eq('id', contestId).single();
-    if (current?.category !== 'การประกวด') throw new Error('ฟังก์ชันนี้ใช้ได้กับการแข่งขันเท่านั้น');
-    if (!['ปิดรับสมัคร', 'ตัดสิน', 'ประกาศผล', 'ยกเลิก'].includes(newStatus)) throw new Error('สถานะที่ระบุไม่ถูกต้อง');
-    const { data, error } = await supabaseAdmin.from('contests').update({ status: newStatus }).eq('id', contestId).select().single();
-    if (error) throw new Error(error.message);
+    if (!(await this.#isContestOwner(contestId, managerId))) {
+      throw Object.assign(new Error('ไม่ได้รับอนุญาต'), { status: 403 });
+    }
+    const { data: current, error: cErr } = await supabaseAdmin
+      .from('contests')
+      .select('category')
+      .eq('id', contestId)
+      .single();
+    if (cErr) throw Object.assign(new Error(cErr.message), { status: 500 });
+    if (!current) throw Object.assign(new Error('ไม่พบข้อมูลกิจกรรม'), { status: 404 });
+    if (current.category !== 'การประกวด') {
+      throw Object.assign(new Error('ฟังก์ชันนี้ใช้ได้กับการแข่งขันเท่านั้น'), { status: 400 });
+    }
+    if (!['ปิดรับสมัคร', 'ตัดสิน', 'ประกาศผล', 'ยกเลิก'].includes(newStatus)) {
+      throw Object.assign(new Error('สถานะที่ระบุไม่ถูกต้อง'), { status: 400 });
+    }
+    const { data, error } = await supabaseAdmin
+      .from('contests')
+      .update({ status: newStatus })
+      .eq('id', contestId)
+      .select()
+      .single();
+    if (error) throw Object.assign(new Error(error.message), { status: 500 });
+
+    // Auto-approve pending submissions when entering judging phase
+    if (newStatus === 'ตัดสิน') {
+      try {
+        const { data: pendings, error: pErr } = await supabaseAdmin
+          .from('submissions')
+          .select('id')
+          .eq('contest_id', contestId)
+          .eq('status', 'pending');
+        if (!pErr && Array.isArray(pendings) && pendings.length > 0) {
+          for (const row of pendings) {
+            try {
+              await this.updateSubmissionStatus(row.id, 'approved', managerId);
+            } catch (e) {
+              console.warn('Auto-approve failed for submission', row.id, e?.message || e);
+            }
+          }
+        }
+      } catch (autoErr) {
+        console.warn('Auto-approve pendings on judging failed:', autoErr?.message || autoErr);
+      }
+    }
     return data;
   }
 
   async finalizeContest(contestId, managerId) {
-    if (!(await this.#isContestOwner(contestId, managerId))) throw new Error('ไม่ได้รับอนุญาต');
-    const { data: contest } = await supabase.from('contests').select('name').eq('id', contestId).single();
-    if (!contest) throw new Error('ไม่พบข้อมูลกิจกรรม');
-    const { data: subs, error: sErr } = await supabase.from('submissions').select('id, owner_id, assignments(total_score)').eq('contest_id', contestId).eq('status', 'approved');
-    if (sErr) throw new Error(sErr.message);
-    if (!subs?.length) throw new Error('ไม่พบผู้สมัครที่อนุมัติแล้วในการประกวดนี้');
+    if (!(await this.#isContestOwner(contestId, managerId))) {
+      throw Object.assign(new Error('ไม่ได้รับอนุญาต'), { status: 403 });
+    }
+    const { data: contest, error: cErr } = await supabaseAdmin
+      .from('contests')
+      .select('name')
+      .eq('id', contestId)
+      .single();
+    if (cErr) throw Object.assign(new Error(cErr.message), { status: 500 });
+    if (!contest) throw Object.assign(new Error('ไม่พบข้อมูลกิจกรรม'), { status: 404 });
+    const { data: subs, error: sErr } = await supabaseAdmin
+      .from('submissions')
+      .select('id, owner_id, assignments(total_score), status')
+      .eq('contest_id', contestId)
+      .in('status', ['approved', 'evaluated']);
+    if (sErr) throw Object.assign(new Error(sErr.message), { status: 500 });
+    if (!subs?.length) {
+      throw Object.assign(new Error('ไม่พบผู้สมัครที่อนุมัติแล้วในการประกวดนี้'), { status: 400 });
+    }
     const ownerIds = new Set();
     const updates = subs.map(sub => {
       ownerIds.add(sub.owner_id);
@@ -297,7 +392,11 @@ class ManagerService {
     const finalized = await this.updateContestStatus(contestId, managerId, 'ประกาศผล');
     if (finalized) {
       const notifications = Array.from(ownerIds).map(oid => ({ user_id: oid, message: `การประกวด "${contest.name}" ได้ประกาศผลแล้ว!`, link_to: `/history` }));
-      await NotificationService.bulkCreate(notifications);
+      try {
+        await NotificationService.bulkCreate(notifications);
+      } catch (e) {
+        console.warn('Failed to send finalize notifications:', e?.message || e);
+      }
     }
     return finalized;
   }

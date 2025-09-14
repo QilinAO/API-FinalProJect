@@ -331,6 +331,60 @@ class ExpertService {
         .insert(insertRow);
       if (error) throw new Error(`เกิดข้อผิดพลาดในการบันทึกคะแนน: ${error.message}`);
     }
+
+    // หากกรรมการที่ตอบรับทุกคนให้คะแนนครบแล้ว ให้ทำเครื่องหมาย submission นี้เป็น 'evaluated'
+    try {
+      const { data: acceptedJudges, error: jErr } = await supabaseAdmin
+        .from('contest_judges')
+        .select('judge_id')
+        .match({ contest_id: subRow.contest_id, status: 'accepted' });
+      if (jErr) throw jErr;
+      const totalJudges = (acceptedJudges || []).length;
+
+      if (totalJudges > 0) {
+        const { count, error: cErr } = await supabaseAdmin
+          .from('assignments')
+          .select('*', { count: 'exact', head: true })
+          .eq('submission_id', submissionId)
+          .eq('status', 'evaluated');
+        if (cErr) throw cErr;
+
+        // Business rule: auto-complete when at least 3 judges scored
+        const requiredJudges = Math.min(3, totalJudges);
+        if ((count || 0) >= requiredJudges) {
+          // 1) อัปเดตสถานะเป็น evaluated
+          await supabaseAdmin
+            .from('submissions')
+            .update({ status: 'evaluated' })
+            .eq('id', submissionId);
+
+          // 2) คำนวณคะแนนเฉลี่ยจาก assignments.total_score ของ 3 คนแรกที่ให้คะแนน (หรือจำนวนน้อยกว่านั้นหากมีน้อยกว่า)
+          const { data: scoreRows, error: sErr } = await supabaseAdmin
+            .from('assignments')
+            .select('total_score, evaluated_at')
+            .eq('submission_id', submissionId)
+            .eq('status', 'evaluated')
+            .order('evaluated_at', { ascending: true })
+            .limit(requiredJudges);
+          if (sErr) throw sErr;
+          const scores = (scoreRows || [])
+            .map(r => Number(r.total_score))
+            .filter(Number.isFinite)
+            .slice(0, requiredJudges);
+          if (scores.length > 0) {
+            const avg = Math.round((scores.reduce((sum, v) => sum + v, 0) / scores.length) * 100) / 100;
+            await supabaseAdmin
+              .from('submissions')
+              .update({ final_score: avg })
+              .eq('id', submissionId);
+          }
+        }
+      }
+    } catch (markErr) {
+      // ไม่ทำให้คำขอล้มเหลว เพียงบันทึกใน log
+      console.warn('[submitCompetitionScore] mark evaluated warning:', markErr?.message || markErr);
+    }
+
     return { success: true };
   }
 

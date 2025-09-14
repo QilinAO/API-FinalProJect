@@ -123,6 +123,68 @@ class AdminService {
       recentUsers,
     };
   }
+
+  /**
+   * อัปเดตข้อมูลผู้ใช้ (profiles): first_name, last_name, username, role
+   */
+  async updateUser(userId, payload) {
+    const patch = {};
+    const allowed = ['first_name', 'last_name', 'username', 'role'];
+    for (const k of allowed) {
+      if (payload[k] !== undefined) patch[k] = payload[k];
+    }
+    if (Object.keys(patch).length === 0) return { message: 'no-change' };
+    if (patch.role && !['user', 'expert', 'manager', 'admin'].includes(patch.role)) {
+      throw new Error('บทบาทไม่ถูกต้อง');
+    }
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .update(patch)
+      .eq('id', userId)
+      .select()
+      .single();
+    if (error) throw new Error(`อัปเดตผู้ใช้ไม่สำเร็จ: ${error.message}`);
+    return data;
+  }
+
+  /**
+   * อัปเดตอีเมล / รหัสผ่าน ผ่าน Supabase Auth (Admin only)
+   * และซิงก์ email ไปตาราง profiles ด้วย (ถ้ามีการเปลี่ยน)
+   */
+  async updateUserCredentials(userId, payload) {
+    const { email, password } = payload || {};
+    if (!email && !password) throw new Error('กรุณาระบุอีเมลหรือรหัสผ่านอย่างน้อย 1 อย่าง');
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('รูปแบบอีเมลไม่ถูกต้อง');
+    }
+    if (password && String(password).length < 6) {
+      throw new Error('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
+    }
+
+    const updatePayload = {};
+    if (email) updatePayload.email = email;
+    if (password) updatePayload.password = password;
+
+    const { data: updated, error } = await supabaseAdmin.auth.admin.updateUserById(userId, updatePayload);
+    if (error) {
+      throw new Error(`อัปเดตบัญชีผู้ใช้ไม่สำเร็จ: ${error.message}`);
+    }
+
+    // Sync email to profiles if provided
+    if (email) {
+      const { error: profErr } = await supabaseAdmin
+        .from('profiles')
+        .update({ email })
+        .eq('id', userId);
+      if (profErr) {
+        // ไม่ทำให้ล้มเหลว แต่บอกเตือน
+        console.warn('[admin.updateUserCredentials] sync email to profiles failed:', profErr.message);
+      }
+    }
+
+    return { message: 'อัปเดตข้อมูลเข้าสู่ระบบสำเร็จ' };
+  }
 }
 
 module.exports = new AdminService();

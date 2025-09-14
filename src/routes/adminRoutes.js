@@ -21,32 +21,29 @@ router.use(authMiddleware);
 router.use(checkRole('admin'));
 
 // ============= Admin Dashboard Routes =============
-router.get('/dashboard', (req, res) => {
-  res.json({ success: true, message: 'Admin dashboard - coming soon' });
-});
-router.get('/stats', (req, res) => {
-  res.json({ success: true, message: 'System stats - coming soon' });
-});
+// สรุปสถิติแดชบอร์ด
+router.get('/dashboard/stats', adminController.getDashboardStats);
+// alias ที่ยังคงไว้เพื่อความเข้ากันได้ (optional)
+router.get('/dashboard', adminController.getDashboardStats);
+router.get('/stats', adminController.getDashboardStats);
 
 // ============= User Management Routes =============
-router.get('/users', (req, res) => {
-  res.json({ success: true, message: 'User management - coming soon' });
-});
-router.get('/users/:userId', (req, res) => {
-  res.json({ success: true, message: 'Get user - coming soon' });
-});
-router.put('/users/:userId/role', (req, res) => {
-  res.json({ success: true, message: 'Update user role - coming soon' });
-});
-router.delete('/users/:userId', (req, res) => {
-  res.json({ success: true, message: 'Delete user - coming soon' });
-});
-router.post('/users/:userId/ban', (req, res) => {
-  res.json({ success: true, message: 'Ban user - coming soon' });
-});
-router.post('/users/:userId/unban', (req, res) => {
-  res.json({ success: true, message: 'Unban user - coming soon' });
-});
+router.get('/users', adminController.getAllUsers);
+router.post('/users', adminController.createUser);
+router.put('/users/:id', adminController.updateUser);
+router.delete('/users/:id', adminController.deleteUser);
+router.put('/users/:id/credentials', adminController.updateUserCredentials);
+
+// Storage (Supabase) browsing for admin
+router.get('/storage/summary', adminController.getStorageSummary);
+router.get('/storage/list', adminController.listStorage);
+router.delete('/storage/file', adminController.deleteStorageFile);
+router.get('/storage/zip', adminController.zipStorageFolder);
+// Stubs for future features
+router.get('/users/:userId', (_req, res) => res.json({ success: true, message: 'Get user - coming soon' }));
+router.put('/users/:userId/role', (_req, res) => res.json({ success: true, message: 'Update user role - coming soon' }));
+router.post('/users/:userId/ban', (_req, res) => res.json({ success: true, message: 'Ban user - coming soon' }));
+router.post('/users/:userId/unban', (_req, res) => res.json({ success: true, message: 'Unban user - coming soon' }));
 
 // ============= Contest Management Routes =============
 router.get('/contests', (req, res) => {

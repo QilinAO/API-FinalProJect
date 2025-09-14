@@ -594,12 +594,8 @@ class ModelApiService {
    */
   async predictBettaTypeBatch(imageBuffers, threshold = 0.90) {
     try {
-      if (!this.huggingFaceToken) {
-        throw new Error('HuggingFace API token is required');
-      }
-
-      // HuggingFace Inference API ไม่รองรับ batch processing โดยตรง
-      // ดังนั้นเราจะประมวลผลแต่ละรูปแล้วรวมผลลัพธ์
+      // ไม่บังคับใช้ token สำหรับ batch อีกต่อไป
+      // ใช้เส้นทางเดียวกับ predictBettaType ซึ่งมี offline/gradio/inference fallback อยู่แล้ว
       const batchResults = await Promise.all(
         imageBuffers.map(async (buffer, index) => {
           try {
